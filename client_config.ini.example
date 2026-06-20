@@ -1,0 +1,9 @@
+# 客户端配置文件示例
+# 将此文件复制为 client_config.ini 并修改相应配置
+
+[server]
+host = 127.0.0.1
+port = 9000
+
+[security]
+aes_key = campus_im_demo_key_32bytes!!

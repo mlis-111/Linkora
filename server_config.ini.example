@@ -1,0 +1,22 @@
+# 配置文件示例
+# 将此文件复制为 server_config.ini 并修改相应配置
+
+[database]
+host = 127.0.0.1
+port = 3306
+user = root
+password = your_mysql_password_here
+database = campus_im
+
+[server]
+host = 0.0.0.0
+port = 9000
+
+[security]
+aes_key = campus_im_demo_key_32bytes!!
+
+[ai]
+api_url =
+api_key =
+model = gpt-4o-mini
+ai_user_id = 1
