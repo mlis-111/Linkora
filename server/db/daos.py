@@ -26,6 +26,14 @@ class UserDAO(BaseDAO):
         """
         return self._query_one("SELECT * FROM user WHERE user_id=%s", (user_id,))
 
+    def get_all_users(self):
+        """获取所有用户列表
+
+        Returns:
+            list: 所有用户信息列表
+        """
+        return self._query_all("SELECT user_id, username, nickname FROM user", ())
+
     def exists(self, username):
         """判断用户名是否存在
 
