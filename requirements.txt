@@ -1,5 +1,5 @@
 pymysql
 DBUtils
-customtkinter
+PyQt5
 pycryptodome
 requests

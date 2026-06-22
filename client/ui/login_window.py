@@ -1,4 +1,4 @@
-import customtkinter as ctk
+from PyQt5.QtWidgets import QLabel, QLineEdit, QPushButton, QVBoxLayout
 from common.messages import MT
 from client.core.base_panel import BasePanel
 
@@ -13,35 +13,50 @@ class LoginWindow(BasePanel):
 
     def _build_ui(self):
         """构建UI"""
-        self.pack(fill="both", expand=True)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(6)
+        layout.addStretch()
 
         # 标题
-        ctk.CTkLabel(self, text="校园IM登录", font=("Arial", 20, "bold")).pack(pady=30)
+        title = QLabel("校园IM登录")
+        title.setStyleSheet("font-size: 20px; font-weight: bold;")
+        layout.addWidget(title)
 
         # 用户名输入
-        ctk.CTkLabel(self, text="用户名:").pack(pady=5)
-        self.username_entry = ctk.CTkEntry(self, width=250, placeholder_text="请输入用户名")
-        self.username_entry.pack(pady=5)
+        layout.addWidget(QLabel("用户名:"))
+        self.username_entry = QLineEdit()
+        self.username_entry.setPlaceholderText("请输入用户名")
+        self.username_entry.setFixedWidth(250)
+        layout.addWidget(self.username_entry)
 
         # 密码输入
-        ctk.CTkLabel(self, text="密码:").pack(pady=5)
-        self.password_entry = ctk.CTkEntry(self, width=250, placeholder_text="请输入密码", show="*")
-        self.password_entry.pack(pady=5)
+        layout.addWidget(QLabel("密码:"))
+        self.password_entry = QLineEdit()
+        self.password_entry.setPlaceholderText("请输入密码")
+        self.password_entry.setEchoMode(QLineEdit.Password)
+        self.password_entry.setFixedWidth(250)
+        layout.addWidget(self.password_entry)
 
         # 登录按钮
-        ctk.CTkButton(self, text="登录", width=250, command=self._login).pack(pady=20)
+        btn = QPushButton("登录")
+        btn.setFixedWidth(250)
+        btn.clicked.connect(self._login)
+        layout.addWidget(btn)
 
         # 状态标签
-        self.status_label = ctk.CTkLabel(self, text="", text_color="red")
-        self.status_label.pack(pady=5)
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: red;")
+        layout.addWidget(self.status_label)
+
+        layout.addStretch()
 
     def _login(self):
         """处理登录按钮点击"""
-        username = self.username_entry.get().strip()
-        password = self.password_entry.get().strip()
+        username = self.username_entry.text().strip()
+        password = self.password_entry.text().strip()
 
         if not username or not password:
-            self.status_label.configure(text="用户名和密码不能为空")
+            self.status_label.setText("用户名和密码不能为空")
             return
 
         self.net.send({
@@ -49,7 +64,7 @@ class LoginWindow(BasePanel):
             "username": username,
             "password": password
         })
-        self.status_label.configure(text="登录中...")
+        self.status_label.setText("登录中...")
 
     def _on_login_resp(self, msg):
         """处理登录响应
@@ -64,9 +79,9 @@ class LoginWindow(BasePanel):
             self.state.online_users = msg.get("online_users", [])
 
             # 隐藏登录窗口，显示主界面
-            self.pack_forget()
+            self.hide()
             self.app.main.show_main()
         else:
             # 登录失败
             reason = msg.get("reason", "登录失败")
-            self.status_label.configure(text=reason)
+            self.status_label.setText(reason)
