@@ -10,7 +10,7 @@ import base64
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QScrollArea, QFrame, QWidget, QProgressBar,
                              QComboBox, QFileDialog, QMessageBox)
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from common.messages import MT
 from client.core.base_panel import BasePanel
 
@@ -27,6 +27,7 @@ class FilePanel(BasePanel):
         self._send_seq = 0
         self._send_total = 0
         self._send_file_id = None
+        self._send_target_id = None
         self._send_fh = None
 
         # 接收缓冲区: file_id -> {file_name, file_size, received, fh, save_path}
@@ -230,14 +231,14 @@ class FilePanel(BasePanel):
         self._file_path = file_path
         file_name = os.path.basename(file_path)
         file_size = os.path.getsize(file_path)
-        receiver_id = self.receiver_combo.currentData()
+        self._send_target_id = self.receiver_combo.currentData()
 
         self._send_file_id = None
         self._sending = True
 
         self.net.send({
             "type": MT.FILE_REQ,
-            "to": receiver_id,
+            "to": self._send_target_id,
             "file_name": file_name,
             "file_size": file_size,
         })
@@ -262,36 +263,42 @@ class FilePanel(BasePanel):
         self._send_next_chunk()
 
     def _send_next_chunk(self):
-        """发送下一个数据块"""
+        """发送下一批数据块（每次 10 块，通过 QTimer 调度避免阻塞 GUI）"""
         if not self._send_fh:
             return
 
-        data = self._send_fh.read(CHUNK_SIZE)
-        if not data:
-            self._send_fh.close()
-            self._send_fh = None
-            self._sending = False
+        # 每次调用发送一批（最多 10 块），然后让出 GUI 线程
+        for _ in range(10):
+            data = self._send_fh.read(CHUNK_SIZE)
+            if not data:
+                # 全部发送完毕
+                self._send_fh.close()
+                self._send_fh = None
+                self._sending = False
+                self.net.send({
+                    "type": MT.FILE_END,
+                    "to": self._send_target_id,
+                    "file_id": self._send_file_id,
+                    "status": 1,
+                })
+                self._update_record_progress(100, "done")
+                return
+
+            encoded = base64.b64encode(data).decode("ascii")
             self.net.send({
-                "type": MT.FILE_END,
-                "to": self.receiver_combo.currentData(),
+                "type": MT.FILE_DATA,
+                "to": self._send_target_id,
                 "file_id": self._send_file_id,
-                "status": 1,
+                "seq": self._send_seq,
+                "data": encoded,
             })
-            self._update_record_progress(100, "done")
-            return
 
-        encoded = base64.b64encode(data).decode("ascii")
-        self.net.send({
-            "type": MT.FILE_DATA,
-            "to": self.receiver_combo.currentData(),
-            "file_id": self._send_file_id,
-            "seq": self._send_seq,
-            "data": encoded,
-        })
+            self._send_seq += 1
+            progress = min(int(self._send_seq / self._send_total * 100), 99)
+            self._update_record_progress(progress, "sending")
 
-        self._send_seq += 1
-        progress = min(int(self._send_seq / self._send_total * 100), 99)
-        self._update_record_progress(progress, "sending")
+        # 还有数据，通过 QTimer 调度下一批
+        QTimer.singleShot(10, self._send_next_chunk)
 
     # ── 接收流程 ─────────────────────────────────────────
 
