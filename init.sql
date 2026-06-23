@@ -58,12 +58,12 @@ CREATE TABLE file_record (
 -- 插入预置数据
 -- AI账号 (user_id=1, password: ai123456)
 INSERT INTO user (username, password_hash, salt, nickname, is_ai_bot) VALUES
-('ai_assistant', 'e10adc3949ba59abbe56e057f20f883e', '00000000000000000000000000000000', 'AI助手', 1);
+('ai_assistant', '35aaafa878438f9f85e6db7ed42e0511', '00000000000000000000000000000000', 'AI助手', 1);
 
 -- 测试账号 (所有密码都与用户名相同)
 -- test1/test1
 INSERT INTO user (username, password_hash, salt, nickname, is_ai_bot) VALUES
-('test1', 'cc03e747a6afbbcbf8be7668acfebee5', '11111111111111111111111111111111', '测试用户1', 0);
+('test1', '5a105e8b9d40e1329780d62ea2265d8a', '11111111111111111111111111111111', '测试用户1', 0);
 
 -- test2/test2
 INSERT INTO user (username, password_hash, salt, nickname, is_ai_bot) VALUES
