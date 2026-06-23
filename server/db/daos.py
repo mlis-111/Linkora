@@ -32,7 +32,7 @@ class UserDAO(BaseDAO):
         Returns:
             list: 所有用户信息列表
         """
-        return self._query_all("SELECT user_id, username, nickname FROM user", ())
+        return self._query("SELECT user_id, username, nickname FROM user", ())
 
     def exists(self, username):
         """判断用户名是否存在

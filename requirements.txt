@@ -3,3 +3,5 @@ DBUtils
 PyQt5
 pycryptodome
 requests
+pytest 
+pytest-cov

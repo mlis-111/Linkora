@@ -13,7 +13,7 @@ class LoginWindow(BasePanel):
         self._build_ui()
 
     def _build_ui(self):
-        """构建UI - 方案B温和校园风格"""
+        """构建UI"""
         # 设置背景色
         self.setStyleSheet("background-color: #EEF2FA;")
 
@@ -177,6 +177,7 @@ class LoginWindow(BasePanel):
 
         if not username or not password:
             self.status_label.setText("用户名和密码不能为空")
+            self.status_label.show()
             return
 
         self.net.send({
@@ -185,6 +186,7 @@ class LoginWindow(BasePanel):
             "password": password
         })
         self.status_label.setText("登录中...")
+        self.status_label.show()
 
     def _on_login_resp(self, msg):
         """处理登录响应
@@ -206,3 +208,4 @@ class LoginWindow(BasePanel):
             # 登录失败
             reason = msg.get("reason", "登录失败")
             self.status_label.setText(reason)
+            self.status_label.show()  # 显示错误提示
