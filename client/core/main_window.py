@@ -13,7 +13,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.app.net.on(MT.USER_LIST, self._on_user_list)
         self.app.net.on("__disconnected__", self._on_disconnected)
-        self.showMaximized()   #最后注释掉
+        # self.showMaximized()  # 便于测试UI
 
     def _build_ui(self):
         """构建主界面UI"""
