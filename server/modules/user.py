@@ -1,4 +1,33 @@
+"""
+用户管理模块 — 武家辉
+
+处理用户注册、登录、登出以及断开连接清理。
+遵守 common/messages.py 中定义的消息契约。
+
+@author 武家辉
+"""
+
+import hashlib
+
 from common.messages import MT
+
+
+def _verify_password(input_password: str, stored_hash: str, salt: str) -> bool:
+    """校验密码，兼容 MD5（预置账号）和 SHA256（新注册用户）
+
+    Args:
+        input_password: 用户输入的明文密码
+        stored_hash: 数据库中存储的 hash 值
+        salt: 数据库中存储的盐值
+
+    Returns:
+        bool: 密码是否匹配
+    """
+    if len(stored_hash) == 64:
+        # SHA256: hash = sha256(salt + password)
+        return hashlib.sha256((salt + input_password).encode()).hexdigest() == stored_hash
+    # 兼容 init.sql 预置账号的 MD5 格式
+    return hashlib.md5(input_password.encode()).hexdigest() == stored_hash
 
 
 def register(router, ctx):
@@ -55,11 +84,13 @@ def _all_users_snapshot(ctx):
 
 
 def handle_login(session, msg):
-    """处理登录请求（阶段0冒烟桩：不校验密码）
+    """处理登录请求
+
+    校验流程：用户存在 → 密码验证(SHA256/MD5兼容) → 防重复登录 → 上线广播
 
     Args:
         session: Session实例
-        msg: 消息字典
+        msg: 消息字典，需包含 username, password
     """
     ctx = session.ctx
     username = msg.get("username", "")
@@ -75,6 +106,15 @@ def handle_login(session, msg):
         return
 
     uid = row["user_id"]
+
+    # 校验密码
+    if not _verify_password(msg.get("password", ""), row["password_hash"], row["salt"]):
+        session.send({
+            "type": MT.LOGIN_RESP,
+            "ok": False,
+            "reason": "密码错误"
+        })
+        return
 
     # 检查是否已在线
     if ctx.online.is_online(uid):
