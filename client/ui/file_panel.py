@@ -119,12 +119,16 @@ class FilePanel(BasePanel):
         self._send_seq = 0
         self._send_total = 0
         self._send_file_id = None
-        self._send_target_id = None
-        self._send_target_name = None
+        self._send_target_ids = []       # 多选接收人 ID 列表
+        self._send_target_names = []     # 多选接收人名称列表
+        self._send_target_id = None      # 当前正在发送的接收人 ID（发送队列使用）
+        self._send_target_name = None    # 当前正在发送的接收人名称
+        self._send_queue = []            # 发送队列: [(target_id, target_name, file_path), ...]
         self._send_fh = None
         self._receiving = {}
         self._records = []
         self._filter = "全部"  # 全部 / 已完成 / 已失败
+        self._recip_check_states = {}    # 下拉列表中各用户的勾选状态: user_id -> bool
         super().__init__(master, app)
 
     def subscribe(self):
@@ -245,8 +249,8 @@ class FilePanel(BasePanel):
         send_to.setFixedHeight(38)
         c_ly.addWidget(send_to)
 
-        # 接收人选择框
-        self._recip_btn = QPushButton("  👤  点击选择接收人")
+        # 接收人选择框（支持多选）
+        self._recip_btn = QPushButton("  👤  点击选择接收人（可多选）")
         self._recip_btn.setFixedHeight(64)
         self._recip_btn.setCursor(Qt.PointingHandCursor)
         self._recip_btn.setStyleSheet(f"""
@@ -311,7 +315,7 @@ class FilePanel(BasePanel):
         self._send_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {C_GRADIENT}; color: white; border: none;
-                border-radius: 20px; font-size: 24px; font-weight: 700;
+                border-radius: 20px; font-size: 26px; font-weight: 700;
             }}
             QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6098FD, stop:1 #3B7FED); }}
             QPushButton:disabled {{ background: #CBD5E1; color: #94A3B8; }}
@@ -396,7 +400,7 @@ class FilePanel(BasePanel):
         lo.setAlignment(Qt.AlignVCenter)
 
         lo.addWidget(QLabel(
-            f"<span style='font-size:38px; font-weight:800; color:{C_DARK};'>"
+            f"<span style='font-size:45px; font-weight:900; color:{C_DARK};'>"
             f"传输记录</span>"))
 
         lo.addStretch()
@@ -526,7 +530,7 @@ class FilePanel(BasePanel):
         pass
 
     def _build_recip_dropdown(self):
-        """构建接收人展开式下拉列表"""
+        """构建接收人展开式下拉列表（支持多选 + 全选）"""
         w = QFrame()
         w.setMinimumHeight(240)
         w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -539,7 +543,10 @@ class FilePanel(BasePanel):
         ly.setContentsMargins(10, 10, 10, 10)
         ly.setSpacing(6)
 
-        # 搜索
+        # 搜索 + 全选 同行
+        top_row = QHBoxLayout()
+        top_row.setSpacing(8)
+
         self._recip_search = QLineEdit()
         self._recip_search.setPlaceholderText("🔍  搜索联系人…")
         self._recip_search.setFixedHeight(50)
@@ -551,7 +558,25 @@ class FilePanel(BasePanel):
             }}
         """)
         self._recip_search.textChanged.connect(self._refresh_recip_items)
-        ly.addWidget(self._recip_search)
+        top_row.addWidget(self._recip_search, 1)
+
+        # 全选复选框
+        self._select_all_cb = QPushButton("全选")
+        self._select_all_cb.setFixedHeight(50)
+        self._select_all_cb.setFixedWidth(72)
+        self._select_all_cb.setCursor(Qt.PointingHandCursor)
+        self._select_all_cb.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {C_FILE_BG}; border: none;
+                border-radius: 14px; font-size: 19px; font-weight: 600;
+                color: {C_PRIMARY}; padding: 0 10px;
+            }}
+            QPushButton:hover {{ background-color: {C_BLUE_BG}; }}
+        """)
+        self._select_all_cb.clicked.connect(self._toggle_select_all)
+        top_row.addWidget(self._select_all_cb)
+
+        ly.addLayout(top_row)
 
         # 列表 —— 拦截滚轮事件防止冒泡到外层 left_scroll
         scroll = _NoPropagateScroll()
@@ -579,11 +604,72 @@ class FilePanel(BasePanel):
             self._recip_dropdown.hide()
         else:
             self._recip_search.clear()
+            # 初始化勾选状态：当前已选中的用户默认勾上
+            self._recip_check_states = {uid: (uid in self._send_target_ids)
+                                        for uid in self._get_selectable_uids()}
             self._refresh_recip_items()
+            self._update_select_all_btn()
             self._recip_dropdown.show()
 
+    def _get_selectable_uids(self):
+        """获取所有可选择的用户 ID 列表"""
+        return [u["user_id"] for u in self.app.state.online_users
+                if u.get("user_id") != self.app.state.user_id]
+
+    def _toggle_select_all(self):
+        """全选 / 取消全选"""
+        uids = self._get_selectable_uids()
+        keyword = self._recip_search.text().strip().lower()
+        if keyword:
+            uids = [u for u in self.app.state.online_users
+                    if u.get("user_id") != self.app.state.user_id
+                    and keyword in (u.get("nickname") or u.get("username", "")).lower()]
+            uids = [u["user_id"] for u in uids]
+
+        # 判断当前是否已全选
+        all_checked = all(self._recip_check_states.get(uid, False) for uid in uids)
+        new_state = not all_checked
+        for uid in uids:
+            self._recip_check_states[uid] = new_state
+
+        # 同步到 _send_target_ids / _send_target_names
+        self._sync_selection_from_check_states()
+        self._refresh_recip_items()
+        self._update_select_all_btn()
+        self._update_recip_btn_display()
+        self._update_send_btn()
+
+    def _update_select_all_btn(self):
+        """更新全选按钮文字"""
+        uids = self._get_selectable_uids()
+        keyword = self._recip_search.text().strip().lower()
+        if keyword:
+            users = [u for u in self.app.state.online_users
+                     if u.get("user_id") != self.app.state.user_id
+                     and keyword in (u.get("nickname") or u.get("username", "")).lower()]
+            uids = [u["user_id"] for u in users]
+
+        if not uids:
+            self._select_all_cb.setText("全选")
+            return
+
+        all_checked = all(self._recip_check_states.get(uid, False) for uid in uids)
+        self._select_all_cb.setText("取消" if all_checked else "全选")
+
+    def _sync_selection_from_check_states(self):
+        """根据勾选状态同步 _send_target_ids / _send_target_names"""
+        users = [u for u in self.app.state.online_users
+                 if u.get("user_id") != self.app.state.user_id]
+        name_map = {u["user_id"]: u.get("nickname") or u.get("username", "")
+                    for u in users}
+
+        self._send_target_ids = [uid for uid, checked
+                                 in self._recip_check_states.items()
+                                 if checked and uid in name_map]
+        self._send_target_names = [name_map[uid] for uid in self._send_target_ids]
+
     def _refresh_recip_items(self, _=None):
-        """刷新下拉用户列表"""
+        """刷新下拉用户列表（带勾选框）"""
         while self._recip_list_layout.count():
             c = self._recip_list_layout.takeAt(0)
             if c.widget(): c.widget().deleteLater()
@@ -594,6 +680,9 @@ class FilePanel(BasePanel):
         if keyword:
             users = [u for u in users if keyword in (
                 u.get("nickname") or u.get("username", "")).lower()]
+
+        # 同步全选按钮状态
+        self._update_select_all_btn()
 
         if not users:
             empty = QLabel("暂无匹配用户")
@@ -606,10 +695,11 @@ class FilePanel(BasePanel):
         for u in users:
             uid = u["user_id"]
             nm = u.get("nickname") or u.get("username", "")
-            uname = u.get("username", "")
             avatar_char = nm[0] if nm else "?"
             color = _AVATAR_COLORS[hash(uid) % len(_AVATAR_COLORS)]
+            checked = self._recip_check_states.get(uid, False)
 
+            # 整行可点击的容器
             row = QPushButton()
             row.setFixedHeight(60)
             row.setCursor(Qt.PointingHandCursor)
@@ -618,12 +708,23 @@ class FilePanel(BasePanel):
                                border-radius: 14px; text-align: left; }}
                 QPushButton:hover {{ background-color: {C_FILE_BG}; }}
             """)
-            row.clicked.connect(lambda checked, n=nm, i=uid: (
-                self._on_recip(n, i), self._recip_dropdown.hide()))
+            row.clicked.connect(lambda checked_btn, i=uid: self._on_recip_toggle(i))
 
             r_ly = QHBoxLayout(row)
             r_ly.setContentsMargins(14, 0, 14, 0)
-            r_ly.setSpacing(16)
+            r_ly.setSpacing(12)
+
+            # 勾选框（自定义样式）
+            cb = QLabel("☑" if checked else "☐")
+            cb.setFixedSize(32, 32)
+            cb.setAlignment(Qt.AlignCenter)
+            cb.setStyleSheet(f"""
+                font-size: 26px; color: {C_PRIMARY if checked else C_MUTED};
+                background: transparent;
+            """)
+            # 保存引用以便刷新时更新
+            cb.setObjectName(f"_cb_{uid}")
+            r_ly.addWidget(cb)
 
             av = QLabel(avatar_char)
             av.setFixedSize(42, 42)
@@ -645,26 +746,62 @@ class FilePanel(BasePanel):
             self._recip_list_layout.addWidget(row)
         self._recip_list_layout.addStretch()
 
-    def _on_recip(self, name, uid):
-        self._send_target_id = uid
-        self._send_target_name = name
-        self._recip_btn.setText(f"  👤  {name}")
-        self._recip_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {C_CARD}; border: 2px solid {C_PRIMARY};
-                border-radius: 18px; font-size: 28px; color: {C_DARK};
-                text-align: left; padding: 0 22px; font-weight: 600;
-            }}
-        """)
+    def _on_recip_toggle(self, uid):
+        """切换单个用户的勾选状态"""
+        self._recip_check_states[uid] = not self._recip_check_states.get(uid, False)
+        self._sync_selection_from_check_states()
+        self._refresh_recip_items()
+        self._update_select_all_btn()
+        self._update_recip_btn_display()
         self._update_send_btn()
 
+    def _update_recip_btn_display(self):
+        """根据已选人数更新接收人按钮显示"""
+        n = len(self._send_target_ids)
+        if n == 0:
+            self._recip_btn.setText("  👤  点击选择接收人（可多选）")
+            self._recip_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: #FAFBFD; border: 2px solid #E2E8F2;
+                    border-radius: 18px; font-size: 28px; color: {C_DARK};
+                    text-align: left; padding: 0 22px; font-weight: 500;
+                }}
+                QPushButton:hover {{ border: 2px solid {C_PRIMARY}; }}
+            """)
+        elif n == 1:
+            name = self._send_target_names[0]
+            self._recip_btn.setText(f"  👤  {name}")
+            self._recip_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {C_CARD}; border: 2px solid {C_PRIMARY};
+                    border-radius: 18px; font-size: 28px; color: {C_DARK};
+                    text-align: left; padding: 0 22px; font-weight: 600;
+                }}
+            """)
+        else:
+            preview = "、".join(self._send_target_names[:3])
+            if n > 3:
+                preview += f" 等 {n} 人"
+            self._recip_btn.setText(f"  👥  {preview}")
+            self._recip_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {C_CARD}; border: 2px solid {C_PRIMARY};
+                    border-radius: 18px; font-size: 28px; color: {C_DARK};
+                    text-align: left; padding: 0 22px; font-weight: 600;
+                }}
+            """)
+
     def _update_send_btn(self):
-        n = len(self._file_paths)
-        if self._send_target_name and n:
+        n_files = len(self._file_paths)
+        n_recip = len(self._send_target_ids)
+        if n_recip and n_files:
             total = sum(os.path.getsize(p) for p in self._file_paths)
-            label = f"📤  发送给 {self._send_target_name}"
-            if n > 1:
-                label += f"（{n} 个文件，{self._fmt(total)}）"
+            if n_recip == 1:
+                label = f"📤  发送给 {self._send_target_names[0]}"
+            else:
+                label = f"📤  发送给 {n_recip} 人"
+            if n_files > 1:
+                label += f"（{n_files} 个文件，{self._fmt(total)}）"
             else:
                 label += f"（{self._fmt(total)}）"
             self._send_btn.setText(label)
@@ -769,12 +906,24 @@ class FilePanel(BasePanel):
     def _select_and_send(self):
         if self._sending:
             return
-        if not self._send_target_id:
+        if not self._send_target_ids:
             QMessageBox.warning(self, "提示", "请先选择接收人")
             return
         if not self._file_paths:
             QMessageBox.warning(self, "提示", "请先选择文件")
             return
+
+        # 构建发送队列：每个接收人 × 每个文件
+        self._send_queue = []
+        for tid in self._send_target_ids:
+            # 从在线用户中找到名称
+            name = tid
+            for u in self.app.state.online_users:
+                if u.get("user_id") == tid:
+                    name = u.get("nickname") or u.get("username", "")
+                    break
+            for fp in self._file_paths:
+                self._send_queue.append((tid, name, fp))
 
         self._sending = True
         self._send_btn.setEnabled(False)
@@ -782,21 +931,25 @@ class FilePanel(BasePanel):
         self._send_next_file()
 
     def _send_next_file(self):
-        """从队列取出下一个文件发送"""
-        if not self._file_paths:
+        """从发送队列取出下一个 (target, file) 发送"""
+        if not self._send_queue:
             self._sending = False
             self._send_btn.setEnabled(True)
             self._send_btn.setText("📤  发送文件")
+            self._send_target_id = None
+            self._send_target_name = None
             return
 
-        path = self._file_paths.pop(0)
+        tid, tname, path = self._send_queue.pop(0)
+        self._send_target_id = tid
+        self._send_target_name = tname
         n = os.path.basename(path)
         s = os.path.getsize(path)
         self._send_file_id = None
         self._current_file_path = path
-        self.net.send({"type": MT.FILE_REQ, "to": self._send_target_id,
+        self.net.send({"type": MT.FILE_REQ, "to": tid,
                        "file_name": n, "file_size": s})
-        self._add_record(n, s, self._send_target_name, "发送给", 0,
+        self._add_record(n, s, tname, "发送给", 0,
                          "sending", time.strftime("%m-%d %H:%M"),
                          fid=None)
         # 等服务端 ACK → _on_file_req_ack → _start_send_chunks
