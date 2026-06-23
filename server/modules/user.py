@@ -8,6 +8,7 @@
 """
 
 import hashlib
+import os
 
 from common.messages import MT
 
@@ -151,12 +152,44 @@ def handle_login(session, msg):
 
 
 def handle_register(session, msg):
-    """处理注册请求（阶段0冒烟桩：直接返回成功）
+    """处理注册请求
+
+    校验流程：非空校验 → 用户名查重 → 生成 salt → SHA256 哈希 → 写入数据库
 
     Args:
         session: Session实例
-        msg: 消息字典
+        msg: 消息字典，需包含 username, password
     """
+    ctx = session.ctx
+    username = msg.get("username", "").strip()
+    password = msg.get("password", "")
+
+    # 非空校验
+    if not username or not password:
+        session.send({
+            "type": MT.REGISTER_RESP,
+            "ok": False,
+            "reason": "用户名和密码不能为空"
+        })
+        return
+
+    # 用户名已存在
+    if ctx.db.users.exists(username):
+        session.send({
+            "type": MT.REGISTER_RESP,
+            "ok": False,
+            "reason": "用户名已存在"
+        })
+        return
+
+    # 生成 salt + SHA256 哈希
+    salt = os.urandom(16).hex()
+    pwd_hash = hashlib.sha256((salt + password).encode()).hexdigest()
+
+    # 插入数据库
+    ctx.db.users.insert_user(username, pwd_hash, salt, nickname=username, is_ai_bot=0)
+
+    # 返回成功
     session.send({
         "type": MT.REGISTER_RESP,
         "ok": True
