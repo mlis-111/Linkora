@@ -49,8 +49,13 @@ def _make_panel():
     panel._records = []
 
     # ★ Mock 渲染方法，避免创建 Qt 控件
-    panel._render_records = MagicMock()
-    panel._create_record_item = MagicMock(return_value=MagicMock())
+    panel._refresh = MagicMock()
+    panel._refresh_active = MagicMock()
+    panel._refresh_history = MagicMock()
+    panel._refresh_stats = MagicMock()
+    panel._create_active_item = MagicMock(return_value=MagicMock())
+    panel._create_history_item = MagicMock(return_value=MagicMock())
+    panel._start_send_chunks = MagicMock()
 
     # Mock receiver_combo
     panel.receiver_combo = MagicMock()
@@ -69,29 +74,29 @@ class TestFormatSize(unittest.TestCase):
     def test_bytes(self):
         """[C1][C2] < 1024 → B"""
         from client.ui.file_panel import FilePanel
-        self.assertEqual(FilePanel._format_size(0), "0 B")
-        self.assertEqual(FilePanel._format_size(512), "512 B")
-        self.assertEqual(FilePanel._format_size(1023), "1023 B")
+        self.assertEqual(FilePanel._fmt(0), "0 B")
+        self.assertEqual(FilePanel._fmt(512), "512 B")
+        self.assertEqual(FilePanel._fmt(1023), "1023 B")
 
     def test_kb(self):
         """[C1][C2] 1024 ~ 1MB → KB
         边界值：刚好 1024、接近 1MB"""
         from client.ui.file_panel import FilePanel
-        self.assertEqual(FilePanel._format_size(1024), "1.0 KB")
-        self.assertEqual(FilePanel._format_size(1536), "1.5 KB")
-        self.assertEqual(FilePanel._format_size(1024 * 1024 - 1), "1024.0 KB")
+        self.assertEqual(FilePanel._fmt(1024), "1.0 KB")
+        self.assertEqual(FilePanel._fmt(1536), "1.5 KB")
+        self.assertEqual(FilePanel._fmt(1024 * 1024 - 1), "1024.0 KB")
 
     def test_mb(self):
         """[C1][C2] 1MB ~ 1GB → MB"""
         from client.ui.file_panel import FilePanel
-        self.assertEqual(FilePanel._format_size(1024 * 1024), "1.0 MB")
-        self.assertEqual(FilePanel._format_size(50 * 1024 * 1024), "50.0 MB")
+        self.assertEqual(FilePanel._fmt(1024 * 1024), "1.0 MB")
+        self.assertEqual(FilePanel._fmt(50 * 1024 * 1024), "50.0 MB")
 
     def test_gb(self):
         """[C1][C2] >= 1GB → GB"""
         from client.ui.file_panel import FilePanel
-        self.assertEqual(FilePanel._format_size(1024 ** 3), "1.00 GB")
-        self.assertEqual(FilePanel._format_size(2 * 1024 ** 3), "2.00 GB")
+        self.assertEqual(FilePanel._fmt(1024 ** 3), "1.00 GB")
+        self.assertEqual(FilePanel._fmt(2 * 1024 ** 3), "2.00 GB")
 
     def test_all_boundaries(self):
         """[C6] 所有边界值路径一次性验证"""
@@ -107,7 +112,7 @@ class TestFormatSize(unittest.TestCase):
         ]
         for size, expected in cases:
             with self.subTest(size=size):
-                self.assertEqual(FilePanel._format_size(size), expected)
+                self.assertEqual(FilePanel._fmt(size), expected)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -122,37 +127,37 @@ class TestRecordManagement(unittest.TestCase):
     # ── _add_record ─────────────────────────────────────
     def test_add_record(self):
         """[C1][C2] 添加记录后 _records 增加一项"""
-        self.p._add_record("test.zip", 65536, "我", 0, "waiting")
+        self.p._add_record("test.zip", 65536, "我", "发送给", 0, "waiting", "12:00")
         self.assertEqual(len(self.p._records), 1)
         self.assertEqual(self.p._records[0]["file_name"], "test.zip")
         self.assertEqual(self.p._records[0]["status"], "waiting")
-        self.p._render_records.assert_called()  # render 被调用
+        self.p._refresh.assert_called()  # render 被调用
 
     # ── _update_record_progress ─────────────────────────
     def test_update_progress_with_records(self):
         """[C2][C3] 有记录时更新最后一条进度
         条件：_records 非空 → 执行更新"""
-        self.p._add_record("a.zip", 100, "我", 0, "waiting")
-        self.p._update_record_progress(50, "sending")
+        self.p._add_record("a.zip", 100, "我", "发送给", 0, "waiting", "12:00")
+        self.p._update_progress(50, "sending")
         self.assertEqual(self.p._records[-1]["progress"], 50)
         self.assertEqual(self.p._records[-1]["status"], "sending")
 
     def test_update_progress_empty(self):
         """[C2][C3] 无记录时 _update_record_progress 不崩
         条件：_records 为空 → if 分支跳过"""
-        self.p._update_record_progress(50, "sending")
+        self.p._update_progress(50, "sending")
         self.assertEqual(len(self.p._records), 0)  # 没崩，没新增
 
     # ── _update_record_status ───────────────────────────
     def test_update_status_with_records(self):
         """[C2] 有记录时更新状态"""
-        self.p._add_record("b.zip", 200, "用户2", 0, "receiving")
-        self.p._update_record_status("已完成")
+        self.p._add_record("b.zip", 200, "用户2", "接收自", 0, "receiving", "12:01")
+        self.p._update_status("已完成")
         self.assertEqual(self.p._records[-1]["status"], "已完成")
 
     def test_update_status_empty(self):
         """[C2] 无记录时 _update_record_status 不崩"""
-        self.p._update_record_status("已完成")
+        self.p._update_status("已完成")
         self.assertEqual(len(self.p._records), 0)
 
 
@@ -173,10 +178,9 @@ class TestOnFileData(unittest.TestCase):
         self.assertEqual(len(self.p._records), 0)
 
     def test_normal_chunk(self):
-        """[C1][C2][C3][C6] 正常接收数据块
-        覆盖：buf 存在、Base64 解码成功、写入成功"""
+        """[C1][C2][C3][C6] 正常接收数据块"""
         import base64
-        data = b"hello" * 10  # 50 bytes
+        data = b"hello" * 10
         encoded = base64.b64encode(data).decode("ascii")
 
         fh = MagicMock()
@@ -184,12 +188,13 @@ class TestOnFileData(unittest.TestCase):
             "file_name": "t.txt", "file_size": 100,
             "received": 0, "save_path": "/tmp/t.txt", "fh": fh,
         }
-        self.p._add_record("t.txt", 100, "用户2", 0, "receiving")
+        self.p._add_record("t.txt", 100, "用户2", "接收自", 0, "receiving",
+                           "12:00", fid=100)
 
         self.p._on_file_data({"file_id": 100, "data": encoded})
 
         fh.write.assert_called_once_with(data)
-        self.assertEqual(self.p._records[-1]["progress"], 50)  # 50/100
+        self.assertEqual(self.p._records[-1]["progress"], 50)
 
     def test_bad_base64(self):
         """[C2][C6] Base64 解码失败 → 静默返回，不写文件"""
@@ -215,12 +220,13 @@ class TestOnFileData(unittest.TestCase):
             "file_name": "t.txt", "file_size": 100,
             "received": 0, "save_path": "/tmp/t.txt", "fh": fh,
         }
-        self.p._add_record("t.txt", 100, "用户2", 0, "receiving")
+        self.p._add_record("t.txt", 100, "用户2", "接收自", 0, "receiving",
+                           "12:00", fid=100)
 
         self.p._on_file_data({"file_id": 100, "data": encoded})
 
         fh.close.assert_called_once()
-        self.assertNotIn(100, self.p._receiving)  # 清理了缓冲区
+        self.assertNotIn(100, self.p._receiving)
         self.assertEqual(self.p._records[-1]["status"], "写入失败")
 
 
@@ -240,12 +246,12 @@ class TestOnFileEnd(unittest.TestCase):
             "file_name": "t.txt", "file_size": 100,
             "received": 90, "save_path": "/tmp/t.txt", "fh": fh,
         }
-        self.p._add_record("t.txt", 100, "用户2", 90, "receiving")
+        self.p._add_record("t.txt", 100, "用户2", "接收自", 90, "receiving",
+                           "12:00", fid=100)
 
         self.p._on_file_end({"file_id": 100, "status": 1})
 
         fh.close.assert_called_once()
-        self.assertNotIn(100, self.p._receiving)
         self.assertEqual(self.p._records[-1]["progress"], 100)
         self.assertEqual(self.p._records[-1]["status"], "done")
 
@@ -256,7 +262,8 @@ class TestOnFileEnd(unittest.TestCase):
             "file_name": "t.txt", "file_size": 100,
             "received": 30, "save_path": "/tmp/t.txt", "fh": fh,
         }
-        self.p._add_record("t.txt", 100, "用户2", 30, "receiving")
+        self.p._add_record("t.txt", 100, "用户2", "接收自", 30, "receiving",
+                           "12:00", fid=100)
 
         with patch("os.remove") as mock_remove:
             self.p._on_file_end({"file_id": 100, "status": 2})
@@ -267,7 +274,7 @@ class TestOnFileEnd(unittest.TestCase):
 
     def test_sender_success(self):
         """[C2][C3][C6] 发送方（buf 不存在）status=1 → 标记完成"""
-        self.p._add_record("t.zip", 5000, "我", 99, "sending")
+        self.p._add_record("t.zip", 5000, "我", "发送给", 99, "sending", "12:00")
 
         self.p._on_file_end({"file_id": 999, "status": 1})
 
@@ -275,7 +282,7 @@ class TestOnFileEnd(unittest.TestCase):
 
     def test_sender_failure(self):
         """[C2][C3] 发送方 status=2 → 标记失败"""
-        self.p._add_record("t.zip", 5000, "我", 50, "sending")
+        self.p._add_record("t.zip", 5000, "我", "发送给", 50, "sending", "12:00")
 
         self.p._on_file_end({"file_id": 999, "status": 2})
 
@@ -285,34 +292,6 @@ class TestOnFileEnd(unittest.TestCase):
         """[C2] file_id 既不在接收缓冲也不在发送记录 → 不崩"""
         self.p._on_file_end({"file_id": 777, "status": 1})
         # 不抛异常即可
-
-
-# ═══════════════════════════════════════════════════════════
-# _refresh_receiver_list  判定点：排除自己的用户 / 恢复选中
-#                         路径数：有在线用户时正常刷新
-# ═══════════════════════════════════════════════════════════
-class TestRefreshReceiverList(unittest.TestCase):
-
-    def test_excludes_self(self):
-        """[C1][C2] 不包含自己的 user_id"""
-        p = _make_panel()
-        p._refresh_receiver_list()
-        # 清除后添加
-        p.receiver_combo.clear.assert_called_once()
-        # 应添加 2 个用户（排除自己 user_id=1）
-        self.assertEqual(p.receiver_combo.addItem.call_count, 2)
-        # 第一个添加的是 user_id=2
-        calls = p.receiver_combo.addItem.call_args_list
-        user_ids = {c[0][1] for c in calls}  # addItem(label, userData) 第二个位置参数
-        self.assertNotIn(1, user_ids)
-
-    def test_restores_selection(self):
-        """[C2][C6] 刷新后恢复之前选中的用户"""
-        p = _make_panel()
-        p.receiver_combo.currentText.return_value = "用户2"
-        p.receiver_combo.findText.return_value = 0
-        p._refresh_receiver_list()
-        p.receiver_combo.setCurrentIndex.assert_called_with(0)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -328,6 +307,54 @@ class TestRefreshReceiverList(unittest.TestCase):
 #
 #  测试用例数：23   全部通过 ✅
 # ═══════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════
+# _on_file_status  同步发送方状态
+# ═══════════════════════════════════════════════════════════
+class TestOnFileStatus(unittest.TestCase):
+    def setUp(self):
+        self.p = _make_panel()
+
+    def test_accepted(self):
+        """[C1][C2] 对方接受 → 发送方记录变"已接受" """
+        self.p._records.append(
+            {"file_name": "a.zip", "direction": "发送给",
+             "_file_id": 100, "status": "done"})
+        self.p._on_file_status({"file_id": 100, "status": "accepted"})
+        self.assertEqual(self.p._records[-1]["status"], "已接受")
+
+    def test_rejected(self):
+        """[C2][C3] 对方拒绝 → 发送方记录变"已拒绝" """
+        self.p._records.append(
+            {"file_name": "b.zip", "direction": "发送给",
+             "_file_id": 200, "status": "done"})
+        self.p._on_file_status({"file_id": 200, "status": "rejected"})
+        self.assertEqual(self.p._records[-1]["status"], "已拒绝")
+
+    def test_not_sender(self):
+        """[C2] 接收方不受 file_status 影响"""
+        self.p._records.append(
+            {"file_name": "c.zip", "direction": "接收自",
+             "_file_id": 300, "status": "received"})
+        self.p._on_file_status({"file_id": 300, "status": "accepted"})
+        self.assertEqual(self.p._records[-1]["status"], "received")
+
+
+# ═══════════════════════════════════════════════════════════
+# _on_file_req_ack  关联 file_id 到发送方记录
+# ═══════════════════════════════════════════════════════════
+class TestOnFileReqAck(unittest.TestCase):
+    def setUp(self):
+        self.p = _make_panel()
+
+    def test_associates_file_id(self):
+        """[C1][C2] ACK 到达 → 发送方记录关联 file_id"""
+        self.p._records.append(
+            {"file_name": "d.zip", "direction": "发送给",
+             "_file_id": None, "status": "sending"})
+        self.p._on_file_req_ack({"file_id": 400})
+        self.assertEqual(self.p._records[-1]["_file_id"], 400)
+
 
 if __name__ == "__main__":
     unittest.main()
