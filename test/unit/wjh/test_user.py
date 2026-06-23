@@ -286,6 +286,40 @@ class TestHandleRegister(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════
+# handle_logout
+# ═══════════════════════════════════════════
+
+class TestHandleLogout(unittest.TestCase):
+    """测试 handle_logout 登出处理函数"""
+
+    @classmethod
+    def setUpClass(cls):
+        from server.modules import user as m
+        cls.m = m
+
+    def test_logout_normal(self):
+        """正常登出 → 从在线表移除 + 广播 USER_LIST"""
+        s, c = _session(), _ctx()
+        c.online.online_ids.return_value = []
+        _bind(s, c)
+        s.user_id = 5
+        self.m.handle_logout(s, {})
+        c.online.remove.assert_called_once_with(5)
+        c.online.broadcast.assert_called_once()
+        payload = c.online.broadcast.call_args[0][0]
+        self.assertEqual(payload["type"], "user_list")
+
+    def test_logout_not_logged_in(self):
+        """未登录用户调用登出 → 不执行任何操作"""
+        s, c = _session(), _ctx()
+        _bind(s, c)
+        s.user_id = None
+        self.m.handle_logout(s, {})
+        c.online.remove.assert_not_called()
+        c.online.broadcast.assert_not_called()
+
+
+# ═══════════════════════════════════════════
 # on_disconnect
 # ═══════════════════════════════════════════
 

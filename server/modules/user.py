@@ -40,6 +40,7 @@ def register(router, ctx):
     """
     router.register(MT.LOGIN, handle_login)
     router.register(MT.REGISTER, handle_register)
+    router.register(MT.LOGOUT, handle_logout)
     ctx.on_disconnect(on_disconnect)
 
 
@@ -194,6 +195,37 @@ def handle_register(session, msg):
         "type": MT.REGISTER_RESP,
         "ok": True
     })
+
+
+def handle_logout(session, msg):
+    """处理登出请求
+
+    流程：从在线表移除 → 广播下线通知 → 关闭连接
+
+    Args:
+        session: Session实例
+        msg: 消息字典
+    """
+    ctx = session.ctx
+    uid = session.user_id
+    if uid is None:
+        return
+
+    # 从在线表移除
+    ctx.online.remove(uid)
+
+    # 广播用户下线
+    snap = _snapshot(ctx)
+    ctx.online.broadcast({
+        "type": MT.USER_LIST,
+        "online_users": snap
+    })
+
+    # 关闭连接（会触发 ClientHandler._cleanup，但 uid 已移除所以不会重复广播）
+    try:
+        session._handler.conn.close()
+    except OSError:
+        pass
 
 
 def on_disconnect(session):
