@@ -5,14 +5,23 @@ import tempfile
 import shutil
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                              QScrollArea, QFrame, QWidget, QProgressBar,
-                             QFileDialog, QMessageBox, QMenu, QLineEdit,
+                             QFileDialog, QMessageBox, QLineEdit,
                              QGraphicsDropShadowEffect, QSizePolicy)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QCursor, QDragEnterEvent, QDropEvent
 from common.messages import MT
 from client.core.base_panel import BasePanel
 
-# ── 拖拽区控件 ──────────────────────────────────────
+# ── 自定义控件 ──────────────────────────────────────
+
+class _NoPropagateScroll(QScrollArea):
+    """滚轮事件不向父级冒泡的滚动区域"""
+    def wheelEvent(self, event):
+        vbar = self.verticalScrollBar()
+        if vbar.isVisible():
+            vbar.wheelEvent(event)
+        event.accept()
+
 
 class _DropZoneFrame(QFrame):
     """支持拖拽上传的文件拖放区"""
@@ -21,12 +30,14 @@ class _DropZoneFrame(QFrame):
         super().__init__(parent)
         self._on_files = on_files
         self.setAcceptDrops(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setAttribute(Qt.WA_StyledBackground, True)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
             self.setStyleSheet(
-                "QFrame { border: 3px solid #2D6CF6; border-radius: 24px; "
+                "QFrame { border: 2px solid #2D6CF6; border-radius: 24px; "
                 "background-color: #E7EFFC; }")
 
     def dragLeaveEvent(self, event):
@@ -64,6 +75,12 @@ C_MUTED_LIGHT = "#CBD5E1"
 C_DARK = "#1E293B"
 C_TEXT_GRAY = "#475569"
 C_TEXT_LIGHT = "#6B7A90"
+
+_AVATAR_COLORS = [
+    "#6366F1", "#FB923C", "#F472B6", "#34D399",
+    "#A78BFA", "#FB7185", "#38BDF8", "#FBBF24",
+    "#4ADE80", "#E879F9",
+]
 
 C_BG = "#EEF2FA"
 C_LEFT_PANEL = "#F7F9FD"
@@ -139,15 +156,27 @@ class FilePanel(BasePanel):
         left_wrapper.setStyleSheet(
             f"background-color: {C_LEFT_PANEL}; border-right: 1px solid {C_BORDER};")
         left_layout = QVBoxLayout(left_wrapper)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setContentsMargins(8, 40, 8, 10)
         left_layout.setSpacing(0)
 
         left_layout.addWidget(self._build_left_header())
 
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setFrameShape(QFrame.NoFrame)
-        left_scroll.setStyleSheet("background: transparent;")
+        left_scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical {
+                background: transparent; width: 6px; margin: 0;
+            }
+            QScrollBar::handle:vertical {
+                background: #CBD5E1; border-radius: 3px; min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
 
         left_content = QWidget()
         left_content_ly = QVBoxLayout(left_content)
@@ -164,7 +193,7 @@ class FilePanel(BasePanel):
         right_wrapper = QWidget()
         right_wrapper.setStyleSheet(f"background-color: {C_BG}; border: none;")
         right_layout = QVBoxLayout(right_wrapper)
-        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setContentsMargins(0, 40, 0, 0)
         right_layout.setSpacing(0)
 
         right_layout.addWidget(self._build_history_header())
@@ -172,20 +201,23 @@ class FilePanel(BasePanel):
         right_layout.addWidget(self._build_history_list(), 1)
         right_layout.addWidget(self._build_stats_bar())
 
-        main.addWidget(left_wrapper, 4)
-        main.addWidget(right_wrapper, 6)
+        main.addWidget(left_wrapper, 3)
+        main.addWidget(right_wrapper, 7)
+
+        self._refresh_history()
+        self._refresh_stats()
 
     # ══════════════════════════════════════════════════
-    #  左栏组件
+    #  
     # ══════════════════════════════════════════════════
 
     def _build_left_header(self):
         w = QWidget()
         w.setFixedHeight(96)
         ly = QHBoxLayout(w)
-        ly.setContentsMargins(28, 28, 28, 18)
+        ly.setContentsMargins(54, 28, 22, 18)
         ly.addWidget(QLabel(
-            "<span style='font-size:42px; font-weight:900; color:#1E293B;'>"
+            "<span style='font-size:45px; font-weight:900; color:#1E293B;'>"
             "文件传输</span>"))
         ly.addStretch()
         return w
@@ -194,7 +226,7 @@ class FilePanel(BasePanel):
         wrapper = QWidget()
         wrapper.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         ly = QVBoxLayout(wrapper)
-        ly.setContentsMargins(16, 0, 16, 0)
+        ly.setContentsMargins(22, 32, 26, 12)
 
         card = QFrame()
         card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
@@ -203,8 +235,8 @@ class FilePanel(BasePanel):
         apply_shadow(card, 18, 4, 22)
 
         c_ly = QVBoxLayout(card)
-        c_ly.setContentsMargins(20, 20, 20, 20)
-        c_ly.setSpacing(10)
+        c_ly.setContentsMargins(26, 30, 26, 30)
+        c_ly.setSpacing(26)
 
         # "发送给" 标题 —— 固定高度
         send_to = QLabel(
@@ -225,14 +257,19 @@ class FilePanel(BasePanel):
             }}
             QPushButton:hover {{ border: 2px solid {C_PRIMARY}; }}
         """)
-        self._recip_btn.clicked.connect(self._show_recip_menu)
+        self._recip_btn.clicked.connect(self._toggle_recip_dropdown)
         c_ly.addWidget(self._recip_btn)
+
+        # 接收人下拉列表（展开式）
+        self._recip_dropdown = self._build_recip_dropdown()
+        self._recip_dropdown.hide()
+        c_ly.addWidget(self._recip_dropdown)
 
         # 拖拽区 —— 最小220px，最大380px
         self._drop_zone = _DropZoneFrame(self._on_files_dropped)
         self._drop_zone.setCursor(Qt.PointingHandCursor)
-        self._drop_zone.setMinimumHeight(160)
-        self._drop_zone.setMaximumHeight(320)
+        self._drop_zone.setMinimumHeight(260)
+        self._drop_zone.setMaximumHeight(420)
         self._drop_zone.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._drop_zone.setStyleSheet(
@@ -253,34 +290,19 @@ class FilePanel(BasePanel):
             "<div style='font-size:22px; color:#94A3B8; text-align:center;'>"
             "或 <span style='color:#2D6CF6; font-weight:600;'>点击选择多个文件</span></div>"))
         self._drop_zone.mousePressEvent = lambda e: self._pick_file()
-        c_ly.addWidget(self._drop_zone, 6)
+        c_ly.addWidget(self._drop_zone)
 
-        # 文件列表 —— 样式化滚动条
+        # 文件列表 —— 直接撑开高度，由外层 left_scroll 统一滚动
         self._file_list_widget = QWidget()
+        self._file_list_widget.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._file_list_layout = QVBoxLayout(self._file_list_widget)
         self._file_list_layout.setContentsMargins(0, 0, 0, 0)
         self._file_list_layout.setSpacing(6)
         self._file_list_layout.setAlignment(Qt.AlignTop)
 
-        self._file_list_scroll = QScrollArea()
-        self._file_list_scroll.setWidgetResizable(True)
-        self._file_list_scroll.setMaximumHeight(240)
-        self._file_list_scroll.setFrameShape(QFrame.NoFrame)
-        self._file_list_scroll.setStyleSheet("""
-            QScrollArea { background: transparent; border: none; }
-            QScrollBar:vertical {
-                background: transparent; width: 6px; margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background: #CBD5E1; border-radius: 3px; min-height: 20px;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-        """)
-        self._file_list_scroll.setWidget(self._file_list_widget)
-        self._file_list_scroll.hide()
-        c_ly.addWidget(self._file_list_scroll)
+        self._file_list_widget.hide()
+        c_ly.addWidget(self._file_list_widget)
 
         # 发送按钮
         self._send_btn = QPushButton("📤  发送文件")
@@ -289,7 +311,7 @@ class FilePanel(BasePanel):
         self._send_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {C_GRADIENT}; color: white; border: none;
-                border-radius: 20px; font-size: 30px; font-weight: 700;
+                border-radius: 20px; font-size: 24px; font-weight: 700;
             }}
             QPushButton:hover {{ background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #6098FD, stop:1 #3B7FED); }}
             QPushButton:disabled {{ background: #CBD5E1; color: #94A3B8; }}
@@ -309,7 +331,7 @@ class FilePanel(BasePanel):
 
         title_w = QWidget()
         title_ly = QHBoxLayout(title_w)
-        title_ly.setContentsMargins(22, 4, 22, 0)
+        title_ly.setContentsMargins(16, 4, 16, 0)
         title_ly.addWidget(QLabel(
             f"<span style='font-size:30px; font-weight:700; color:{C_TEXT_GRAY};'>"
             f"📥  传输中</span>"))
@@ -343,7 +365,7 @@ class FilePanel(BasePanel):
 
         title_w = QWidget()
         title_ly = QHBoxLayout(title_w)
-        title_ly.setContentsMargins(22, 4, 22, 0)
+        title_ly.setContentsMargins(16, 4, 16, 0)
         title_ly.addWidget(QLabel(
             f"<span style='font-size:22px; font-weight:700; color:{C_TEXT_GRAY};'>"
             f"📥  待接收</span>"))
@@ -367,29 +389,29 @@ class FilePanel(BasePanel):
     def _build_history_header(self):
         w = QFrame()
         w.setFixedHeight(96)
-        w.setStyleSheet(
-            f"QFrame {{ background-color: {C_LEFT_PANEL}; "
-            f"border-bottom: 1px solid {C_BORDER}; }}")
+        w.setStyleSheet(f"QFrame {{ background-color: transparent; border: none; }}")
         lo = QHBoxLayout(w)
-        lo.setContentsMargins(32, 0, 32, 0)
-        lo.setSpacing(16)
+        lo.setContentsMargins(56, 28, 56, 18)
+        lo.setSpacing(24)
         lo.setAlignment(Qt.AlignVCenter)
 
         lo.addWidget(QLabel(
             f"<span style='font-size:38px; font-weight:800; color:{C_DARK};'>"
             f"传输记录</span>"))
 
-        # 筛选标签
+        lo.addStretch()
+
+        # 筛选标签 —— 位于搜索框左侧
         self._filter_tags = {}
         for label in ("全部", "已完成", "已失败"):
             tag = QLabel(label)
-            tag.setContentsMargins(20, 8, 20, 8)
+            tag.setContentsMargins(24, 10, 24, 10)
             tag.setCursor(Qt.PointingHandCursor)
             tag.mousePressEvent = lambda e, l=label: self._set_filter(l)
             self._filter_tags[label] = tag
             lo.addWidget(tag)
 
-        lo.addStretch()
+        lo.addSpacing(20)
 
         self._search_box = QLineEdit()
         self._search_box.setPlaceholderText("🔍  搜索文件名")
@@ -413,16 +435,16 @@ class FilePanel(BasePanel):
         w = QWidget()
         w.setStyleSheet("background: transparent;")
         lo = QHBoxLayout(w)
-        lo.setContentsMargins(42, 18, 42, 14)
+        lo.setContentsMargins(66, 18, 66, 14)
         lo.setSpacing(0)
 
         style = f"font-size: 22px; font-weight: 700; color: {C_MUTED};"
 
-        l1 = QLabel("文件"); l1.setFixedWidth(280); l1.setStyleSheet(style); lo.addWidget(l1)
-        l2 = QLabel("方向"); l2.setFixedWidth(160); l2.setStyleSheet(style); lo.addWidget(l2)
-        l3 = QLabel("大小"); l3.setFixedWidth(110); l3.setStyleSheet(style); lo.addWidget(l3)
+        l1 = QLabel("文件"); l1.setFixedWidth(620); l1.setStyleSheet(style); lo.addWidget(l1)
+        l2 = QLabel("方向"); l2.setFixedWidth(240); l2.setStyleSheet(style); lo.addWidget(l2)
+        l3 = QLabel("大小"); l3.setFixedWidth(165); l3.setStyleSheet(style); lo.addWidget(l3)
         l4 = QLabel("时间"); l4.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred); l4.setStyleSheet(style); lo.addWidget(l4)
-        l5 = QLabel("状态"); l5.setFixedWidth(130); l5.setStyleSheet(style); l5.setAlignment(Qt.AlignRight | Qt.AlignVCenter); lo.addWidget(l5)
+        l5 = QLabel("状态"); l5.setFixedWidth(160); l5.setStyleSheet(style); l5.setAlignment(Qt.AlignRight | Qt.AlignVCenter); lo.addWidget(l5)
         return w
 
     def _build_history_list(self):
@@ -439,7 +461,7 @@ class FilePanel(BasePanel):
         self._history_content = QWidget()
         self._history_content.setStyleSheet("background: transparent;")
         self._history_layout = QVBoxLayout(self._history_content)
-        self._history_layout.setContentsMargins(16, 4, 16, 16)
+        self._history_layout.setContentsMargins(40, 4, 40, 16)
         self._history_layout.setSpacing(10)
         self._history_layout.setAlignment(Qt.AlignTop)
 
@@ -454,12 +476,12 @@ class FilePanel(BasePanel):
             f"border-top: 1px solid {C_BORDER}; "
             f"border-bottom: none; border-left: none; border-right: none; }}")
         lo = QHBoxLayout(bar)
-        lo.setContentsMargins(30, 0, 30, 0)
+        lo.setContentsMargins(54, 0, 54, 0)
         lo.setSpacing(36)
 
-        self._stat_active = self._stat("传输中", "0 项", C_PRIMARY)
-        self._stat_done = self._stat("已完成", "0 项", C_SUCCESS)
-        self._stat_fail = self._stat("失败", "0 项", C_DANGER)
+        self._stat_active = self._stat("传输中", "0 项")
+        self._stat_done = self._stat("已完成", "0 项")
+        self._stat_fail = self._stat("失败", "0 项")
         
         lo.addWidget(self._stat_active)
         lo.addWidget(self._stat_done)
@@ -467,14 +489,11 @@ class FilePanel(BasePanel):
         lo.addStretch()
         return bar
 
-    def _stat(self, label, value, color):
+    def _stat(self, label, value):
         w = QWidget()
         lo = QHBoxLayout(w)
         lo.setContentsMargins(0, 0, 0, 0)
-        lo.setSpacing(9)
-        lo.addWidget(QLabel(
-            f"<div style='width:14px; height:14px; border-radius:7px; "
-            f"background:{color};'></div>"))
+        lo.setSpacing(0)
         lo.addWidget(QLabel(
             f"<span style='font-size:22px; color:{C_TEXT_LIGHT};'>"
             f"{label} <strong style='color:{C_DARK};'>{value}</strong></span>"))
@@ -493,12 +512,12 @@ class FilePanel(BasePanel):
         for label, tag in self._filter_tags.items():
             if label == self._filter:
                 tag.setStyleSheet(
-                    f"font-size: 24px; color: {C_PRIMARY}; font-weight: 700; "
-                    f"background-color: {C_BLUE_BG}; border-radius: 16px;")
+                    f"font-size: 24px; color: #fff; font-weight: 700; "
+                    f"background-color: {C_PRIMARY}; border-radius: 16px;")
             else:
                 tag.setStyleSheet(
-                    f"font-size: 24px; color: {C_MUTED}; "
-                    f"background-color: transparent; border-radius: 16px;")
+                    f"font-size: 24px; color: {C_TEXT_LIGHT}; "
+                    f"background-color: #E2E8F0; border-radius: 16px;")
 
     def _on_search(self, text):
         self._refresh_history()
@@ -506,24 +525,125 @@ class FilePanel(BasePanel):
     def _on_user_list_update(self, _):
         pass
 
-    def _show_recip_menu(self):
-        m = QMenu(self)
-        m.setStyleSheet(f"""
-            QMenu {{ background-color: {C_CARD}; border: 1px solid {C_BORDER};
-                border-radius: 20px; padding: 12px; font-size: 26px; }}
-            QMenu::item {{ padding: 18px 36px; border-radius: 14px; }}
-            QMenu::item:selected {{ background-color: {C_FILE_BG};
-                color: {C_PRIMARY}; font-weight: 600; }}
+    def _build_recip_dropdown(self):
+        """构建接收人展开式下拉列表"""
+        w = QFrame()
+        w.setMinimumHeight(240)
+        w.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        w.setStyleSheet(f"""
+            QFrame {{ background-color: {C_CARD}; border: 1px solid {C_BORDER};
+                     border-radius: 16px; }}
         """)
-        for u in self.app.state.online_users:
-            if u.get("user_id") == self.app.state.user_id: continue
-            nm = u.get("nickname") or u.get("username", "")
+
+        ly = QVBoxLayout(w)
+        ly.setContentsMargins(10, 10, 10, 10)
+        ly.setSpacing(6)
+
+        # 搜索
+        self._recip_search = QLineEdit()
+        self._recip_search.setPlaceholderText("🔍  搜索联系人…")
+        self._recip_search.setFixedHeight(50)
+        self._recip_search.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {C_FILE_BG}; border: none;
+                border-radius: 14px; font-size: 21px;
+                color: {C_DARK}; padding: 0 22px;
+            }}
+        """)
+        self._recip_search.textChanged.connect(self._refresh_recip_items)
+        ly.addWidget(self._recip_search)
+
+        # 列表 —— 拦截滚轮事件防止冒泡到外层 left_scroll
+        scroll = _NoPropagateScroll()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; border: none; }
+            QScrollBar:vertical { background: transparent; width: 6px; }
+            QScrollBar::handle:vertical { background: #CBD5E1; border-radius: 3px; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+        """)
+        self._recip_list_content = QWidget()
+        self._recip_list_layout = QVBoxLayout(self._recip_list_content)
+        self._recip_list_layout.setContentsMargins(14, 10, 14, 14)
+        self._recip_list_layout.setSpacing(8)
+        self._recip_list_layout.setAlignment(Qt.AlignTop)
+        scroll.setWidget(self._recip_list_content)
+        ly.addWidget(scroll, 1)
+
+        return w
+
+    def _toggle_recip_dropdown(self):
+        if self._recip_dropdown.isVisible():
+            self._recip_dropdown.hide()
+        else:
+            self._recip_search.clear()
+            self._refresh_recip_items()
+            self._recip_dropdown.show()
+
+    def _refresh_recip_items(self, _=None):
+        """刷新下拉用户列表"""
+        while self._recip_list_layout.count():
+            c = self._recip_list_layout.takeAt(0)
+            if c.widget(): c.widget().deleteLater()
+
+        keyword = self._recip_search.text().strip().lower()
+        users = [u for u in self.app.state.online_users
+                 if u.get("user_id") != self.app.state.user_id]
+        if keyword:
+            users = [u for u in users if keyword in (
+                u.get("nickname") or u.get("username", "")).lower()]
+
+        if not users:
+            empty = QLabel("暂无匹配用户")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet(f"font-size: 22px; color: {C_MUTED}; padding: 32px;")
+            self._recip_list_layout.addWidget(empty)
+            self._recip_list_layout.addStretch()
+            return
+
+        for u in users:
             uid = u["user_id"]
-            a = m.addAction(f"{nm}")
-            a.triggered.connect(lambda _, n=nm, i=uid: self._on_recip(n, i))
-        if m.isEmpty():
-            m.addAction("暂无在线用户").setEnabled(False)
-        m.exec_(self._recip_btn.mapToGlobal(self._recip_btn.rect().bottomLeft()))
+            nm = u.get("nickname") or u.get("username", "")
+            uname = u.get("username", "")
+            avatar_char = nm[0] if nm else "?"
+            color = _AVATAR_COLORS[hash(uid) % len(_AVATAR_COLORS)]
+
+            row = QPushButton()
+            row.setFixedHeight(60)
+            row.setCursor(Qt.PointingHandCursor)
+            row.setStyleSheet(f"""
+                QPushButton {{ background: transparent; border: none;
+                               border-radius: 14px; text-align: left; }}
+                QPushButton:hover {{ background-color: {C_FILE_BG}; }}
+            """)
+            row.clicked.connect(lambda checked, n=nm, i=uid: (
+                self._on_recip(n, i), self._recip_dropdown.hide()))
+
+            r_ly = QHBoxLayout(row)
+            r_ly.setContentsMargins(14, 0, 14, 0)
+            r_ly.setSpacing(16)
+
+            av = QLabel(avatar_char)
+            av.setFixedSize(42, 42)
+            av.setAlignment(Qt.AlignCenter)
+            av.setStyleSheet(f"""
+                background-color: {color}; color: white;
+                border-radius: 16px; font-size: 22px; font-weight: 700;
+            """)
+            r_ly.addWidget(av)
+
+            name_lbl = QLabel(nm)
+            name_lbl.setStyleSheet(f"font-size: 22px; font-weight: 600; color: {C_DARK};")
+            r_ly.addWidget(name_lbl, 1)
+
+            status = QLabel("● 在线")
+            status.setStyleSheet(f"font-size: 16px; color: {C_SUCCESS};")
+            r_ly.addWidget(status)
+
+            self._recip_list_layout.addWidget(row)
+        self._recip_list_layout.addStretch()
 
     def _on_recip(self, name, uid):
         self._send_target_id = uid
@@ -589,57 +709,57 @@ class FilePanel(BasePanel):
         self._update_send_btn()
 
     def _refresh_file_list(self):
-        """刷新文件列表 UI"""
+        """刷新文件列表 UI — 内容直接撑开，外层 left_scroll 统一滚动"""
         while self._file_list_layout.count():
             c = self._file_list_layout.takeAt(0)
             if c.widget():
                 c.widget().deleteLater()
 
         if not self._file_paths:
-            self._file_list_scroll.hide()
+            self._file_list_widget.hide()
             return
 
-        self._file_list_scroll.show()
+        self._file_list_widget.show()
         for path in self._file_paths:
             self._file_list_layout.addWidget(self._create_file_item(path))
 
     def _create_file_item(self, path):
         """单行文件条目"""
         item = QFrame()
-        item.setFixedHeight(52)
+        item.setFixedHeight(60)
         item.setStyleSheet(
-            f"QFrame {{ background-color: {C_FILE_BG}; border-radius: 12px; }}")
+            f"QFrame {{ background-color: {C_FILE_BG}; border-radius: 18px; }}")
 
         lo = QHBoxLayout(item)
-        lo.setContentsMargins(12, 8, 12, 8)
-        lo.setSpacing(10)
+        lo.setContentsMargins(14, 10, 14, 10)
+        lo.setSpacing(12)
 
         n = os.path.basename(path)
         ext = os.path.splitext(n)[1].lower()
         icon, bg, _ = _ICON_MAP.get(ext, ("📎", "#DBEAFE", C_MUTED))
 
         ic = QLabel(icon)
-        ic.setFixedSize(34, 34)
+        ic.setFixedSize(38, 38)
         ic.setAlignment(Qt.AlignCenter)
         ic.setStyleSheet(
-            f"background-color: {bg}; border-radius: 10px; font-size: 18px;")
+            f"background-color: {bg}; border-radius: 12px; font-size: 20px;")
         lo.addWidget(ic)
 
         name_lbl = QLabel(n)
         name_lbl.setStyleSheet(
-            f"font-size: 18px; font-weight: 600; color: {C_DARK};")
+            f"font-size: 22px; font-weight: 600; color: {C_DARK};")
         lo.addWidget(name_lbl, 1)
 
         sz_lbl = QLabel(self._fmt(os.path.getsize(path)))
-        sz_lbl.setStyleSheet(f"font-size: 15px; color: {C_MUTED};")
+        sz_lbl.setStyleSheet(f"font-size: 18px; color: {C_MUTED};")
         lo.addWidget(sz_lbl)
 
         rm_btn = QPushButton("✕")
-        rm_btn.setFixedSize(28, 28)
+        rm_btn.setFixedSize(32, 32)
         rm_btn.setCursor(Qt.PointingHandCursor)
         rm_btn.setStyleSheet(
             "QPushButton { background-color: #FEE2E2; color: #EF4444; "
-            "border: none; border-radius: 8px; font-weight: 800; font-size: 13px; }"
+            "border: none; border-radius: 10px; font-weight: 800; font-size: 15px; }"
             "QPushButton:hover { background-color: #FECACA; }")
         rm_btn.clicked.connect(lambda: self._remove_file(path))
         lo.addWidget(rm_btn)
@@ -1082,12 +1202,12 @@ class FilePanel(BasePanel):
         apply_shadow(row, 8, 2, 12)
 
         lo = QHBoxLayout(row)
-        lo.setContentsMargins(22, 0, 22, 0)
+        lo.setContentsMargins(36, 0, 36, 0)
         lo.setAlignment(Qt.AlignVCenter)
         lo.setSpacing(0)
 
         # 列1: 文件 (280px)
-        col1 = QWidget(); col1.setFixedWidth(280)
+        col1 = QWidget(); col1.setFixedWidth(620)
         ly1 = QHBoxLayout(col1); ly1.setContentsMargins(0,0,10,0); ly1.setSpacing(12)
         ext = os.path.splitext(r["file_name"])[1].lower()
         icon, bg, _ = _ICON_MAP.get(ext, ("📎", "#F1F5F9", C_MUTED))
@@ -1111,7 +1231,7 @@ class FilePanel(BasePanel):
         lo.addWidget(col1)
 
         # 列2: 方向 (160px)
-        col2 = QWidget(); col2.setFixedWidth(160)
+        col2 = QWidget(); col2.setFixedWidth(240)
         ly2 = QHBoxLayout(col2); ly2.setContentsMargins(0,0,0,0); ly2.setSpacing(8)
         dir_bg = C_SUCCESS_BG if r["direction"] == "接收自" else C_BLUE_BG
         dir_color = C_SUCCESS if r["direction"] == "接收自" else C_PRIMARY
@@ -1133,7 +1253,7 @@ class FilePanel(BasePanel):
 
         # 列3: 大小 (110px)
         sz_lbl = QLabel(r['size_str'])
-        sz_lbl.setFixedWidth(110)
+        sz_lbl.setFixedWidth(165)
         sz_lbl.setStyleSheet(f"font-size: 20px; color: {C_TEXT_LIGHT};")
         lo.addWidget(sz_lbl)
 
@@ -1144,7 +1264,7 @@ class FilePanel(BasePanel):
         lo.addWidget(tm_lbl)
 
         # 列5: 状态
-        st_w = QWidget(); st_w.setFixedWidth(130)
+        st_w = QWidget(); st_w.setFixedWidth(160)
         st_ly = QHBoxLayout(st_w); st_ly.setContentsMargins(0, 0, 0, 0)
         st_ly.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
@@ -1176,14 +1296,14 @@ class FilePanel(BasePanel):
 
     def _refresh_stats(self):
         def cnt(*ss): return str(sum(1 for r in self._records if r["status"] in ss))
-        for w, *ss in [
-            (self._stat_active, "sending", "receiving", "waiting"),
-            (self._stat_done, "done", "已完成", "已接受"),
-            (self._stat_fail, "写入失败", "读取失败", "传输失败", "已拒绝"),
+        for w, label, *ss in [
+            (self._stat_active,  "传输中", "sending", "receiving", "waiting"),
+            (self._stat_done,    "已完成", "done", "已完成", "已接受"),
+            (self._stat_fail,    "失败",   "写入失败", "读取失败", "传输失败", "已拒绝"),
         ]:
             w.findChildren(QLabel)[-1].setText(
                 f"<span style='font-size:22px; color:{C_TEXT_LIGHT};'>"
-                f"<b style='color:{C_DARK};'>{cnt(*ss)} 项</b></span>")
+                f"{label} <b style='color:{C_DARK};'>{cnt(*ss)} 项</b></span>")
 
     @staticmethod
     def _fmt(s):
