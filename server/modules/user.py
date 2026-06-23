@@ -34,6 +34,26 @@ def _snapshot(ctx):
     return out
 
 
+def _all_users_snapshot(ctx):
+    """获取所有用户列表（用于好友列表显示）
+
+    Args:
+        ctx: ServerContext实例
+
+    Returns:
+        list: 所有用户列表
+    """
+    users = ctx.db.users.get_all_users()
+    out = []
+    for u in users:
+        out.append({
+            "user_id": u["user_id"],
+            "username": u["username"],
+            "nickname": u.get("nickname") or u["username"]
+        })
+    return out
+
+
 def handle_login(session, msg):
     """处理登录请求（阶段0冒烟桩：不校验密码）
 
@@ -71,6 +91,7 @@ def handle_login(session, msg):
 
     # 获取在线用户快照
     snap = _snapshot(ctx)
+    all_users = _all_users_snapshot(ctx)  # 获取所有用户
 
     # 回复登录成功
     session.send({
@@ -78,7 +99,8 @@ def handle_login(session, msg):
         "ok": True,
         "user_id": uid,
         "nickname": row.get("nickname") or row["username"],
-        "online_users": snap
+        "online_users": snap,
+        "all_users": all_users  # 添加所有用户列表
     })
 
     # 广播用户上线
