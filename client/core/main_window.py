@@ -14,6 +14,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1240, 800)
         self._build_ui()
         self.app.net.on(MT.USER_LIST, self._on_user_list)
+        self.app.net.on("__disconnected__", self._on_disconnected)
 
     def _build_ui(self):
         """构建主界面UI"""
@@ -243,28 +244,17 @@ class MainWindow(QMainWindow):
             }
         """)
 
-        scroll_content = QWidget()
-        scroll_layout = QVBoxLayout(scroll_content)
-        scroll_layout.setContentsMargins(32, 0, 32, 0)
-        scroll_layout.setSpacing(4)
-        scroll_layout.setAlignment(Qt.AlignTop)
+        self.conv_scroll_content = QWidget()
+        self.conv_scroll_layout = QVBoxLayout(self.conv_scroll_content)
+        self.conv_scroll_layout.setContentsMargins(32, 0, 32, 0)
+        self.conv_scroll_layout.setSpacing(4)
+        self.conv_scroll_layout.setAlignment(Qt.AlignTop)
 
-        # 示例对话项
-        conversations = [
-            ("公共聊天室", "朱俊基：@全体成员 今晚8点对进度", "16:24", True, "👥", "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4F8DFD, stop:1 #2D6CF6)"),
-            ("AI 助手", "已为你整理今天的待办清单", "15:02", False, "✨", "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #A78BFA, stop:1 #7C5CFC)"),
-            ("董钧豪", "AES加密方案我发你了", "14:30", False, "钧", "#6366F1", 2),
-            ("郭玄同", "客户端框架提交了", "11:15", False, "玄", "#FB923C"),
-            ("赵紫娟老师", "记得周五提交课程设计文档", "昨天", False, "赵", "#F472B6"),
-            ("武家辉", "登录注册联调通过 ✅", "昨天", False, "家", "#34D399"),
-        ]
-
-        for conv in conversations:
-            item = self._create_conversation_item(*conv)
-            scroll_layout.addWidget(item)
-
-        scroll.setWidget(scroll_content)
+        scroll.setWidget(self.conv_scroll_content)
         layout.addWidget(scroll)
+
+        # 首次填充
+        self._refresh_conversation_list()
 
         return conv_panel
 
@@ -418,8 +408,60 @@ class MainWindow(QMainWindow):
 
     def show_main(self):
         """登录成功后由login面板调用，接口与原方案一致"""
+        self._refresh_conversation_list()
         self.showMaximized()  # 登录成功后最大化显示
 
     def _on_user_list(self, msg):
         self.app.state.online_users = msg.get("online_users", [])
-        # TODO: 刷新在线列表控件
+        self._refresh_conversation_list()
+
+    # ── 对话列表刷新 ──────────────────────────────────
+
+    _AVATAR_COLORS = [
+        "#6366F1", "#FB923C", "#F472B6", "#34D399",
+        "#A78BFA", "#FB7185", "#38BDF8", "#FBBF24",
+        "#4ADE80", "#E879F9",
+    ]
+
+    def _refresh_conversation_list(self):
+        """根据在线用户动态刷新对话列表"""
+        while self.conv_scroll_layout.count():
+            child = self.conv_scroll_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # 固定项：公共聊天室 + AI 助手
+        fixed = [
+            ("公共聊天室", "💬 点击进入公共聊天室", "", True, "👥",
+             "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4F8DFD, stop:1 #2D6CF6)"),
+            ("AI 助手", "✨ 智能问答，随时为你解答", "", False, "✨",
+             "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #A78BFA, stop:1 #7C5CFC)"),
+        ]
+        for name, msg_text, time, active, avatar, color in fixed:
+            item = self._create_conversation_item(
+                name, msg_text, time, active, avatar, color)
+            self.conv_scroll_layout.addWidget(item)
+
+        # 在线用户
+        online = self.app.state.online_users
+        for i, u in enumerate(online):
+            uid = u.get("user_id")
+            if uid == self.app.state.user_id:
+                continue
+            name = u.get("nickname") or u.get("username", "")
+            avatar_text = name[0] if name else "?"
+            color = self._AVATAR_COLORS[i % len(self._AVATAR_COLORS)]
+            item = self._create_conversation_item(
+                name, "在线", "", False, avatar_text, color)
+            self.conv_scroll_layout.addWidget(item)
+
+        self.conv_scroll_layout.addStretch()
+
+    def _on_disconnected(self, msg):
+        """服务器断开连接——自动清理 UI + 回登录界面"""
+        self.app.state.user_id = None
+        self.app.state.username = None
+        self.app.state.online_users = []
+        self._refresh_conversation_list()
+        self.hide()
+        self.app.login_win.show()

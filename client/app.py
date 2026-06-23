@@ -31,6 +31,11 @@ class ChatClient:
         ]:
             self.main.add_panel(key, cls(self.main, self))
 
+    def show_login(self):
+        """回到登录界面（断线时调用）"""
+        self.main.hide()
+        self.login_win.show()
+
     def run(self):
         self.net.connect()
         self.login_win.show()
