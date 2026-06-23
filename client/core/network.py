@@ -32,7 +32,11 @@ class NetworkClient(QObject):
 
     def _recv_loop(self):
         while True:
-            msg = recv_msg(self._sock)
+            try:
+                msg = recv_msg(self._sock)
+            except OSError:
+                self._msg_signal.emit({"type": "__disconnected__"})
+                break
             if msg is None:
                 self._msg_signal.emit({"type": "__disconnected__"})
                 break

@@ -31,6 +31,19 @@ class ChatClient:
         ]:
             self.main.add_panel(key, cls(self.main, self))
 
+    def show_login(self):
+        """回到登录界面（断线时调用）"""
+        self.main.hide()
+        # 重置登录窗口状态
+        if hasattr(self.login_win, 'username_entry'):
+            self.login_win.username_entry.clear()
+        if hasattr(self.login_win, 'password_entry'):
+            self.login_win.password_entry.clear()
+        if hasattr(self.login_win, 'status_label'):
+            self.login_win.status_label.setText("与服务器断开连接，请重新登录")
+            self.login_win.status_label.show()
+        self.login_win.show()
+
     def run(self):
         self.net.connect()
         self.login_win.show()
