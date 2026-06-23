@@ -7,7 +7,10 @@
 @author 武家辉
 """
 
-from PyQt5.QtWidgets import QLabel, QLineEdit, QPushButton, QVBoxLayout, QFrame, QHBoxLayout
+from PyQt5.QtWidgets import (
+    QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
+    QFrame, QCheckBox
+)
 from PyQt5.QtCore import Qt
 from common.messages import MT
 from client.core.base_panel import BasePanel
@@ -29,154 +32,55 @@ class LoginWindow(BasePanel):
         self._mode = self.MODE_LOGIN
         self._build_ui()
 
-    def _build_ui(self):
-        """构建UI"""
-        self.setStyleSheet("background-color: #EEF2FA;")
+    # ── 工具方法 ──────────────────────────────
 
-        layout = QVBoxLayout(self)
-        layout.setSpacing(20)
-        layout.setAlignment(Qt.AlignCenter)
+    def _make_input(self, placeholder, echo=None, focused=False):
+        """创建一个统一样式的输入框
 
-        # Logo
-        logo = QLabel("💬")
-        logo.setAlignment(Qt.AlignCenter)
-        logo.setStyleSheet("""
-            font-size: 48px;
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #4F8DFD, stop:1 #2D6CF6);
-            color: white;
-            border-radius: 28px;
-            min-width: 80px;
-            max-width: 80px;
-            min-height: 80px;
-            max-height: 80px;
-        """)
-        layout.addWidget(logo, alignment=Qt.AlignCenter)
-
-        # 标题
-        title = QLabel("校园通")
-        title.setAlignment(Qt.AlignCenter)
-        title.setStyleSheet("font-size: 28px; font-weight: 800; color: #1E293B;")
-        layout.addWidget(title, alignment=Qt.AlignCenter)
-
-        # 副标题
-        subtitle = QLabel("局域网即时通信")
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setStyleSheet("font-size: 14px; color: #94A3B8;")
-        layout.addWidget(subtitle, alignment=Qt.AlignCenter)
-
-        # 登录/注册卡片
-        card = QFrame()
-        card.setFixedWidth(380)
-        card.setStyleSheet("""
-            QFrame {
-                background-color: #fff;
-                border-radius: 20px;
-            }
-        """)
-
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(40, 40, 40, 40)
-        card_layout.setSpacing(18)
-
-        # 用户名输入
-        username_label = QLabel("用户名")
-        username_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #1E293B;")
-        card_layout.addWidget(username_label)
-
-        self.username_entry = QLineEdit()
-        self.username_entry.setPlaceholderText("请输入用户名")
-        self.username_entry.setFixedHeight(46)
-        self.username_entry.setStyleSheet("""
-            QLineEdit {
-                background-color: #F7F9FD;
-                border: 2px solid #E7EFFC;
-                border-radius: 12px;
+        Args:
+            placeholder: 占位文本
+            echo: QLineEdit.EchoMode（密码框用）
+            focused: 是否显示焦点状态（蓝框+光晕）
+        """
+        e = QLineEdit()
+        e.setPlaceholderText(placeholder)
+        e.setFixedHeight(50)
+        if echo:
+            e.setEchoMode(echo)
+        border = "#2D6CF6" if focused else "#E2E8F2"
+        bg = "#F5F8FF" if focused else "#fff"
+        shadow = "0 0 0 4px rgba(45,108,246,0.10);" if focused else ""
+        e.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {bg};
+                border: 1.5px solid {border};
+                border-radius: 13px;
                 font-size: 14px;
                 color: #1E293B;
-            }
-            QLineEdit:focus {
-                border: 2px solid #4F8DFD;
-                background-color: #fff;
-            }
-            QLineEdit::placeholder {
-                color: #A9B6C8;
-            }
+                padding: 0 14px;
+                {shadow}
+            }}
+            QLineEdit::placeholder {{
+                color: #C0CADB;
+            }}
         """)
-        card_layout.addWidget(self.username_entry)
+        return e
 
-        # 密码输入
-        password_label = QLabel("密码")
-        password_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #1E293B;")
-        card_layout.addWidget(password_label)
-
-        self.password_entry = QLineEdit()
-        self.password_entry.setPlaceholderText("请输入密码")
-        self.password_entry.setEchoMode(QLineEdit.Password)
-        self.password_entry.setFixedHeight(46)
-        self.password_entry.setStyleSheet("""
-            QLineEdit {
-                background-color: #F7F9FD;
-                border: 2px solid #E7EFFC;
-                border-radius: 12px;
-                font-size: 14px;
-                color: #1E293B;
-            }
-            QLineEdit:focus {
-                border: 2px solid #4F8DFD;
-                background-color: #fff;
-            }
-            QLineEdit::placeholder {
-                color: #A9B6C8;
-            }
-        """)
-        self.password_entry.returnPressed.connect(self._submit)
-        card_layout.addWidget(self.password_entry)
-
-        # 确认密码（注册模式显示）
-        confirm_label = QLabel("确认密码")
-        confirm_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #1E293B;")
-        self.confirm_label = confirm_label
-        card_layout.addWidget(confirm_label)
-        confirm_label.hide()
-
-        self.confirm_entry = QLineEdit()
-        self.confirm_entry.setPlaceholderText("请再次输入密码")
-        self.confirm_entry.setEchoMode(QLineEdit.Password)
-        self.confirm_entry.setFixedHeight(46)
-        self.confirm_entry.setStyleSheet("""
-            QLineEdit {
-                background-color: #F7F9FD;
-                border: 2px solid #E7EFFC;
-                border-radius: 12px;
-                font-size: 14px;
-                color: #1E293B;
-            }
-            QLineEdit:focus {
-                border: 2px solid #4F8DFD;
-                background-color: #fff;
-            }
-            QLineEdit::placeholder {
-                color: #A9B6C8;
-            }
-        """)
-        self.confirm_entry.returnPressed.connect(self._submit)
-        card_layout.addWidget(self.confirm_entry)
-        self.confirm_entry.hide()
-
-        # 操作按钮
-        self.action_btn = QPushButton("登录")
-        self.action_btn.setFixedHeight(48)
-        self.action_btn.setCursor(Qt.PointingHandCursor)
-        self.action_btn.setStyleSheet("""
+    def _make_primary_btn(self, text):
+        """创建主按钮（蓝渐变）"""
+        btn = QPushButton(text)
+        btn.setFixedHeight(56)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #4F8DFD, stop:1 #2D6CF6);
                 color: white;
                 border: none;
-                border-radius: 12px;
-                font-size: 15px;
-                font-weight: 700;
+                border-radius: 16px;
+                font-size: 16px;
+                font-weight: 800;
+                letter-spacing: 1px;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -187,29 +91,201 @@ class LoginWindow(BasePanel):
                     stop:0 #2D6CF6, stop:1 #1E4FD0);
             }
         """)
-        self.action_btn.clicked.connect(self._submit)
-        card_layout.addWidget(self.action_btn)
+        btn.clicked.connect(self._submit)
+        return btn
 
-        # 模式切换按钮
-        self.switch_btn = QPushButton("没有账号？去注册")
-        self.switch_btn.setFixedHeight(36)
-        self.switch_btn.setCursor(Qt.PointingHandCursor)
-        self.switch_btn.setStyleSheet("""
+    def _make_switch_btn(self, text):
+        """创建模式切换按钮（透明底+蓝字）"""
+        btn = QPushButton(text)
+        btn.setFixedHeight(52)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet("""
             QPushButton {
-                background-color: transparent;
-                color: #4F8DFD;
-                border: none;
-                font-size: 13px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
+                background-color: #F5F8FF;
+                border: 1.5px solid #D4E2FC;
+                border-radius: 14px;
+                font-size: 15px;
+                font-weight: 700;
                 color: #2D6CF6;
             }
+            QPushButton:hover {
+                background-color: #EEF4FF;
+                border: 1.5px solid #B8D0FC;
+            }
         """)
-        self.switch_btn.clicked.connect(self._toggle_mode)
-        card_layout.addWidget(self.switch_btn)
+        btn.clicked.connect(self._toggle_mode)
+        return btn
 
-        # 状态标签
+    def _make_divider(self, text):
+        """创建带文字的分隔线"""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        left = QFrame()
+        left.setFixedHeight(1)
+        left.setStyleSheet("background-color: #E5EAF3;")
+        right = QFrame()
+        right.setFixedHeight(1)
+        right.setStyleSheet("background-color: #E5EAF3;")
+        label = QLabel(text)
+        label.setStyleSheet("font-size: 12.5px; color: #C0CADB;")
+        row.addWidget(left)
+        row.addSpacing(12)
+        row.addWidget(label)
+        row.addSpacing(12)
+        row.addWidget(right)
+        return row
+
+    def _make_field_label(self, text):
+        """创建字段标签"""
+        lbl = QLabel(text)
+        lbl.setStyleSheet("font-size: 12.5px; font-weight: 600; color: #475569;")
+        return lbl
+
+    def _make_status_bar(self):
+        """创建底部服务器状态栏"""
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setAlignment(Qt.AlignCenter)
+        dot = QLabel("●")
+        dot.setStyleSheet("font-size: 10px; color: #34D399;")
+        text = QLabel("服务器连接正常")
+        text.setStyleSheet("font-size: 12px; color: #64748B; font-weight: 500;")
+        addr = QLabel("127.0.0.1:9000")
+        addr.setStyleSheet("font-size: 12px; color: #C0CADB;")
+        row.addWidget(dot)
+        row.addSpacing(6)
+        row.addWidget(text)
+        row.addSpacing(8)
+        row.addWidget(addr)
+        return row
+
+    # ── 构建UI ──────────────────────────────
+
+    def _build_ui(self):
+        """构建UI"""
+        # 根容器
+        self.root_layout = QVBoxLayout(self)
+        self.root_layout.setContentsMargins(0, 0, 0, 0)
+        self.root_layout.setAlignment(Qt.AlignCenter)
+        self.setStyleSheet("background-color: #EEF2FA;")
+
+        # ======== 登录卡片 ========
+        self.login_card = self._build_login_card()
+        self.root_layout.addWidget(self.login_card, alignment=Qt.AlignCenter)
+
+        # ======== 注册卡片 ========
+        self.register_card = self._build_register_card()
+        self.root_layout.addWidget(self.register_card, alignment=Qt.AlignCenter)
+        self.register_card.hide()
+
+    def _build_login_card(self):
+        """构建登录卡片"""
+        card = QFrame()
+        card.setFixedWidth(420)
+        card.setStyleSheet("""
+            QFrame {
+                background-color: #fff;
+                border-radius: 20px;
+            }
+        """)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(44, 36, 44, 34)
+        layout.setSpacing(0)
+
+        # 标题区域
+        title_area = QVBoxLayout()
+        title_area.setAlignment(Qt.AlignCenter)
+        title_area.setSpacing(5)
+
+        logo = QLabel("💬")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedSize(64, 64)
+        logo.setStyleSheet("""
+            font-size: 32px;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #4F8DFD, stop:1 #2D6CF6);
+            color: white;
+            border-radius: 20px;
+        """)
+        title_area.addWidget(logo, alignment=Qt.AlignCenter)
+
+        title = QLabel("欢迎回来")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 22px; font-weight: 900; color: #1E293B; letter-spacing: 1px;")
+        title_area.addWidget(title)
+
+        subtitle = QLabel("使用校园账号登录校园通")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("font-size: 14px; color: #94A3B8; margin-bottom: 10px;")
+        title_area.addWidget(subtitle)
+
+        layout.addLayout(title_area)
+        layout.addSpacing(28)
+
+        # 用户名
+        layout.addWidget(self._make_field_label("用户名"))
+        layout.addSpacing(6)
+        self.login_username = self._make_input("输入用户名")
+        self.login_username.returnPressed.connect(self._submit)
+        layout.addWidget(self.login_username)
+        layout.addSpacing(14)
+
+        # 密码（焦点状态）
+        layout.addWidget(self._make_field_label("密码"))
+        layout.addSpacing(6)
+        self.login_password = self._make_input("输入密码",
+                                                echo=QLineEdit.Password, focused=True)
+        self.login_password.returnPressed.connect(self._submit)
+        layout.addWidget(self.login_password)
+        layout.addSpacing(10)
+
+        # 记住我 + 忘记密码
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self.remember_cb = QCheckBox("记住我")
+        self.remember_cb.setStyleSheet("""
+            QCheckBox {
+                font-size: 13.5px;
+                color: #64748B;
+                spacing: 8px;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+                border-radius: 6px;
+                border: 1.5px solid #2D6CF6;
+                background-color: #fff;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #2D6CF6;
+                border: 1.5px solid #2D6CF6;
+            }
+        """)
+        forgot = QLabel("忘记密码？")
+        forgot.setStyleSheet("font-size: 13.5px; color: #2D6CF6; font-weight: 600;")
+        forgot.setCursor(Qt.PointingHandCursor)
+        row.addWidget(self.remember_cb)
+        row.addStretch()
+        row.addWidget(forgot)
+        layout.addLayout(row)
+        layout.addSpacing(22)
+
+        # 登录按钮
+        self.login_btn = self._make_primary_btn("登录 →")
+        layout.addWidget(self.login_btn)
+        layout.addSpacing(18)
+
+        # 分隔线
+        layout.addLayout(self._make_divider("还没有账号？"))
+        layout.addSpacing(18)
+
+        # 去注册
+        self.to_register_btn = self._make_switch_btn("＋ 立即注册")
+        layout.addWidget(self.to_register_btn)
+        layout.addSpacing(20)
+
+        # 状态提示
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setStyleSheet("""
@@ -220,94 +296,295 @@ class LoginWindow(BasePanel):
             padding: 8px;
         """)
         self.status_label.hide()
-        card_layout.addWidget(self.status_label)
+        layout.addWidget(self.status_label)
 
-        layout.addWidget(card, alignment=Qt.AlignCenter)
+        # 服务器状态
+        if hasattr(self, '_status_bar_added'):
+            pass
+        else:
+            self._status_bar_added = True
+        layout.addSpacing(8)
+        layout.addLayout(self._make_status_bar())
+
+        return card
+
+    def _build_register_card(self):
+        """构建注册卡片"""
+        card = QFrame()
+        card.setFixedWidth(420)
+        card.setStyleSheet("""
+            QFrame {
+                background-color: #fff;
+                border-radius: 20px;
+            }
+        """)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(44, 34, 44, 34)
+        layout.setSpacing(0)
+
+        # 标题区域
+        title_area = QVBoxLayout()
+        title_area.setAlignment(Qt.AlignCenter)
+        title_area.setSpacing(5)
+
+        logo = QLabel("💬")
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedSize(64, 64)
+        logo.setStyleSheet("""
+            font-size: 32px;
+            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                stop:0 #4F8DFD, stop:1 #2D6CF6);
+            color: white;
+            border-radius: 20px;
+        """)
+        title_area.addWidget(logo, alignment=Qt.AlignCenter)
+
+        title = QLabel("创建账户")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-size: 22px; font-weight: 900; color: #1E293B; letter-spacing: 1px;")
+        title_area.addWidget(title)
+
+        subtitle = QLabel("加入你的校园通信团队")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet("font-size: 14px; color: #94A3B8;")
+        title_area.addWidget(subtitle)
+
+        layout.addLayout(title_area)
+        layout.addSpacing(24)
+
+        # 用户名 + 昵称（左右并排）
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.setContentsMargins(0, 0, 0, 0)
+
+        col_user = QVBoxLayout()
+        col_user.setSpacing(5)
+        col_user.addWidget(self._make_field_label("用户名"))
+        self.reg_username = self._make_input("用于登录")
+        self.reg_username.returnPressed.connect(self._submit)
+        col_user.addWidget(self.reg_username)
+
+        col_nick = QVBoxLayout()
+        col_nick.setSpacing(5)
+        col_nick.addWidget(self._make_field_label("昵称"))
+        self.reg_nickname = self._make_input("展示给他人")
+        self.reg_nickname.returnPressed.connect(self._submit)
+        col_nick.addWidget(self.reg_nickname)
+
+        row.addLayout(col_user)
+        row.addLayout(col_nick)
+        layout.addLayout(row)
+        layout.addSpacing(12)
+
+        # 密码
+        layout.addWidget(self._make_field_label("密码"))
+        layout.addSpacing(5)
+        self.reg_password = self._make_input("至少 6 位", echo=QLineEdit.Password)
+        self.reg_password.returnPressed.connect(self._submit)
+        layout.addWidget(self.reg_password)
+        layout.addSpacing(12)
+
+        # 确认密码（匹配状态）
+        layout.addWidget(self._make_field_label("确认密码"))
+        layout.addSpacing(5)
+        confirm_frame = QFrame()
+        confirm_frame.setStyleSheet("background: transparent;")
+        cf_layout = QHBoxLayout(confirm_frame)
+        cf_layout.setContentsMargins(0, 0, 0, 0)
+        cf_layout.setSpacing(0)
+
+        self.reg_confirm = self._make_input("请再次输入密码",
+                                             echo=QLineEdit.Password, focused=True)
+        self.reg_confirm.setStyleSheet("""
+            QLineEdit {
+                background-color: #F0FDF6;
+                border: 1.5px solid #34D399;
+                border-radius: 13px;
+                font-size: 14px;
+                color: #1E293B;
+                padding: 0 14px;
+            }
+            QLineEdit::placeholder {
+                color: #C0CADB;
+            }
+        """)
+        self.reg_confirm.returnPressed.connect(self._submit)
+        cf_layout.addWidget(self.reg_confirm)
+
+        self.confirm_status = QLabel("✓ 匹配")
+        self.confirm_status.setStyleSheet("""
+            font-size: 12px;
+            font-weight: 600;
+            color: #34D399;
+            padding: 0 8px 0 4px;
+        """)
+        self.confirm_status.hide()
+        cf_layout.addWidget(self.confirm_status)
+
+        self.reg_confirm.textChanged.connect(self._on_confirm_changed)
+        layout.addWidget(confirm_frame)
+        layout.addSpacing(18)
+
+        # 注册按钮
+        self.register_btn = self._make_primary_btn("创建账户 →")
+        layout.addWidget(self.register_btn)
+        layout.addSpacing(18)
+
+        # 分隔线
+        layout.addLayout(self._make_divider("已有账号？"))
+        layout.addSpacing(18)
+
+        # 去登录
+        self.to_login_btn = self._make_switch_btn("→ 立即登录")
+        layout.addWidget(self.to_login_btn)
+        layout.addSpacing(20)
+
+        # 状态提示
+        self.reg_status_label = QLabel("")
+        self.reg_status_label.setAlignment(Qt.AlignCenter)
+        self.reg_status_label.setStyleSheet("""
+            font-size: 12px;
+            color: #FB7185;
+            background-color: #FFF1F2;
+            border-radius: 10px;
+            padding: 8px;
+        """)
+        self.reg_status_label.hide()
+        layout.addWidget(self.reg_status_label)
+
+        # 服务器状态
+        layout.addSpacing(8)
+        layout.addLayout(self._make_status_bar())
+
+        return card
+
+    # ── 事件 ──────────────────────────────
+
+    def _on_confirm_changed(self, text):
+        """确认密码输入变化时更新匹配状态"""
+        pwd = self.reg_password.text()
+        if not text:
+            self.confirm_status.hide()
+        elif text == pwd:
+            self.confirm_status.setText("✓ 匹配")
+            self.confirm_status.setStyleSheet(
+                "font-size: 12px; font-weight: 600; color: #34D399; padding: 0 8px 0 4px;")
+            self.confirm_status.show()
+        else:
+            self.confirm_status.setText("✗ 不匹配")
+            self.confirm_status.setStyleSheet(
+                "font-size: 12px; font-weight: 600; color: #FB7185; padding: 0 8px 0 4px;")
+            self.confirm_status.show()
 
     def _toggle_mode(self):
         """切换登录/注册模式"""
         if self._mode == self.MODE_LOGIN:
             self._mode = self.MODE_REGISTER
-            self.action_btn.setText("注册")
-            self.switch_btn.setText("已有账号？去登录")
-            self.confirm_label.show()
-            self.confirm_entry.show()
+            self.login_card.hide()
+            self.register_card.show()
         else:
             self._mode = self.MODE_LOGIN
-            self.action_btn.setText("登录")
-            self.switch_btn.setText("没有账号？去注册")
-            self.confirm_label.hide()
-            self.confirm_entry.hide()
+            self.register_card.hide()
+            self.login_card.show()
+        self._clear_status()
+
+    def _clear_status(self):
+        """清除状态提示"""
         self.status_label.hide()
+        self.reg_status_label.hide()
 
     def _submit(self):
         """提交登录或注册请求"""
-        username = self.username_entry.text().strip()
-        password = self.password_entry.text().strip()
+        if self._mode == self.MODE_LOGIN:
+            self._submit_login()
+        else:
+            self._submit_register()
+
+    def _submit_login(self):
+        """提交登录"""
+        username = self.login_username.text().strip()
+        password = self.login_password.text().strip()
 
         if not username or not password:
             self.status_label.setText("用户名和密码不能为空")
             self.status_label.show()
             return
 
-        if self._mode == self.MODE_LOGIN:
-            self.net.send({
-                "type": MT.LOGIN,
-                "username": username,
-                "password": password
-            })
-            self.status_label.setText("登录中...")
-            self.status_label.show()
-        else:
-            confirm = self.confirm_entry.text().strip()
-            if password != confirm:
-                self.status_label.setText("两次输入的密码不一致")
-                self.status_label.show()
-                return
-            if len(password) < 6:
-                self.status_label.setText("密码长度不能少于6位")
-                self.status_label.show()
-                return
-            self.net.send({
-                "type": MT.REGISTER,
-                "username": username,
-                "password": password
-            })
-            self.status_label.setText("注册中...")
-            self.status_label.show()
+        self.net.send({
+            "type": MT.LOGIN,
+            "username": username,
+            "password": password
+        })
+        self.login_btn.setText("登录中...")
+        self.login_btn.setEnabled(False)
+        self.status_label.setText("")
+        self.status_label.hide()
+
+    def _submit_register(self):
+        """提交注册"""
+        username = self.reg_username.text().strip()
+        nickname = self.reg_nickname.text().strip()
+        password = self.reg_password.text().strip()
+        confirm = self.reg_confirm.text().strip()
+
+        if not username:
+            self.reg_status_label.setText("用户名不能为空")
+            self.reg_status_label.show()
+            return
+        if not password:
+            self.reg_status_label.setText("密码不能为空")
+            self.reg_status_label.show()
+            return
+        if password != confirm:
+            self.reg_status_label.setText("两次输入的密码不一致")
+            self.reg_status_label.show()
+            return
+        if len(password) < 6:
+            self.reg_status_label.setText("密码长度不能少于6位")
+            self.reg_status_label.show()
+            return
+
+        # 昵称默认为用户名
+        if not nickname:
+            nickname = username
+
+        self.net.send({
+            "type": MT.REGISTER,
+            "username": username,
+            "password": password,
+            "nickname": nickname
+        })
+        self.register_btn.setText("注册中...")
+        self.register_btn.setEnabled(False)
+        self.reg_status_label.setText("")
+        self.reg_status_label.hide()
 
     def _on_login_resp(self, msg):
-        """处理登录响应
+        """处理登录响应"""
+        self.login_btn.setText("登录 →")
+        self.login_btn.setEnabled(True)
 
-        Args:
-            msg: 消息字典
-        """
         if msg.get("ok"):
-            # 登录成功
             self.state.user_id = msg["user_id"]
             self.state.username = msg.get("nickname", msg.get("username", ""))
             self.state.online_users = msg.get("online_users", [])
             self.state.all_users = msg.get("all_users", [])
-
-            # 隐藏登录窗口，显示主界面
             self.hide()
             self.app.main.show_main()
         else:
-            # 登录失败
             reason = msg.get("reason", "登录失败")
             self.status_label.setText(reason)
             self.status_label.show()
 
     def _on_register_resp(self, msg):
-        """处理注册响应
+        """处理注册响应"""
+        self.register_btn.setText("创建账户 →")
+        self.register_btn.setEnabled(True)
 
-        Args:
-            msg: 消息字典
-        """
         if msg.get("ok"):
-            # 注册成功，切回登录模式并提示
-            if self._mode == self.MODE_REGISTER:
-                self._toggle_mode()
+            # 注册成功，切回登录模式
+            self._toggle_mode()
             self.status_label.setStyleSheet("""
                 font-size: 12px;
                 color: #10B981;
@@ -318,14 +595,13 @@ class LoginWindow(BasePanel):
             self.status_label.setText("注册成功，请登录")
             self.status_label.show()
         else:
-            # 注册失败
             reason = msg.get("reason", "注册失败")
-            self.status_label.setStyleSheet("""
+            self.reg_status_label.setStyleSheet("""
                 font-size: 12px;
                 color: #FB7185;
                 background-color: #FFF1F2;
                 border-radius: 10px;
                 padding: 8px;
             """)
-            self.status_label.setText(reason)
-            self.status_label.show()
+            self.reg_status_label.setText(reason)
+            self.reg_status_label.show()

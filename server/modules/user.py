@@ -187,8 +187,11 @@ def handle_register(session, msg):
     salt = os.urandom(16).hex()
     pwd_hash = hashlib.sha256((salt + password).encode()).hexdigest()
 
+    # 昵称（可选，默认为用户名）
+    nickname = msg.get("nickname", "").strip() or username
+
     # 插入数据库
-    ctx.db.users.insert_user(username, pwd_hash, salt, nickname=username, is_ai_bot=0)
+    ctx.db.users.insert_user(username, pwd_hash, salt, nickname=nickname, is_ai_bot=0)
 
     # 返回成功
     session.send({
