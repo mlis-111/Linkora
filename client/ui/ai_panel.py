@@ -2,13 +2,13 @@
 AI 问答面板
 作者：董浩楠
 
-根据 UI 设计稿 AI问答面板.dc.html 精确还原：
-- 历史对话侧栏 (280px)
-- AI 聊天头部
-- 消息气泡（不对称圆角）
-- 代码块渲染
-- 快捷提问标签
-- 输入区
+校园 AI 智能助手，为师生提供学习、工作和校园生活方面的帮助：
+- 答疑解惑（课程知识、作业辅导、考试复习）
+- 文案润色（论文、报告、通知）
+- 学习规划（复习计划、时间管理、选课建议）
+- 校园生活（社团活动、校园资讯）
+
+UI 严格对齐设计稿 AI问答面板.dc.html。
 """
 
 import time
@@ -153,11 +153,11 @@ class AIPanel(BasePanel):
 
         # 示例历史
         samples = [
-            ("AES加密实现思路",  "今天",   3),
-            ("PyQt5 布局最佳实践", "昨天",  7),
-            ("TCP Socket 长连接心跳", "周一", 5),
-            ("SQLite 并发读写问题",  "周日",  4),
-            ("文件分片传输算法设计", "上周五", 6),
+            ("高等数学疑难解答",  "今天",   3),
+            ("论文开题报告润色", "昨天",  7),
+            ("期末考试复习规划", "周一", 5),
+            ("英语四级备考攻略",  "周日",  4),
+            ("社团活动策划方案", "上周五", 6),
         ]
         for i, (t, d, c) in enumerate(samples):
             self._conversations.append(
@@ -236,7 +236,7 @@ class AIPanel(BasePanel):
         nr.addWidget(bd)
         nr.addStretch()
         info.addLayout(nr)
-        st = QLabel("随时问我校园通项目的任何技术问题")
+        st = QLabel("随时问我学习、工作和校园生活方面的问题")
         st.setStyleSheet(f"font-size:13px; color:{C_SUBTLE};")
         info.addWidget(st)
         hl.addLayout(info)
@@ -286,7 +286,7 @@ class AIPanel(BasePanel):
             "<div style='font-size:16px; font-weight:700; color:#64748B;'>"
             "AI 智能助手</div>"
             "<div style='font-size:13px; color:#94A3B8; margin-top:8px;'>"
-            "问我关于校园通项目的任何技术问题</div>"
+            "问我学习、工作和校园生活方面的问题</div>"
             "</div>")
         self._empty_hint.setAlignment(Qt.AlignCenter)
         self._msg_layout.addWidget(self._empty_hint)
@@ -309,10 +309,10 @@ class AIPanel(BasePanel):
         qr = QHBoxLayout()
         qr.setSpacing(9)
         prompts = [
-            "🔑 密钥管理最佳实践",
-            "📡 TCP 断线重连",
-            "🗃️ 消息持久化",
-            "⚡ 并发处理优化",
+            "📖 帮我解释课程知识点",
+            "✍️ 润色论文摘要",
+            "📅 制定期末复习计划",
+            "💡 如何高效学习方法",
         ]
         for p in prompts:
             chip = QPushButton(p)
@@ -343,7 +343,7 @@ class AIPanel(BasePanel):
 
         self._input_field = QLineEdit()
         self._input_field.setPlaceholderText(
-            "问我关于校园通项目的任何技术问题…")
+            "问我学习、工作和校园生活方面的问题…")
         self._input_field.setMinimumHeight(28)
         self._input_field.setStyleSheet(
             f"border:none; background:transparent; font-size:15px;"
