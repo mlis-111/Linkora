@@ -344,7 +344,7 @@ class AIPanel(BasePanel):
         self._input_field = QLineEdit()
         self._input_field.setPlaceholderText(
             "问我学习、工作和校园生活方面的问题…")
-        self._input_field.setMinimumHeight(28)
+        self._input_field.setMinimumHeight(32)
         self._input_field.setStyleSheet(
             f"border:none; background:transparent; font-size:15px;"
             f"color:{C_DARK};")
@@ -352,15 +352,15 @@ class AIPanel(BasePanel):
         icl.addWidget(self._input_field, 1)
 
         # 发送按钮
-        self._send_btn = QPushButton()
-        self._send_btn.setFixedSize(44, 44)
+        self._send_btn = QPushButton("➤")
+        self._send_btn.setFixedSize(48, 48)
         self._send_btn.setCursor(Qt.PointingHandCursor)
         self._send_btn.setStyleSheet(f"""
             QPushButton {{
                 background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
                     stop:0 {C_AI_START}, stop:1 {C_AI_END});
-                border:none; border-radius:14px;
-                image:url(data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 11l19-9-9 19-2-8-8-2Z" stroke="white" stroke-width="2" stroke-linejoin="round"/></svg>);
+                color:white; border:none; border-radius:15px;
+                font-size:22px;
             }}
             QPushButton:hover {{
                 background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
