@@ -24,24 +24,16 @@ from client.core.base_panel import BasePanel
 from common.messages import MT
 
 # ── 设计稿颜色 ─────────────────────────────────────────
-C_AI_START  = "#A78BFA"
-C_AI_END    = "#7C5CFC"
-C_AI_BADGE  = "#EDE9FE"
-C_AI_TEXT   = "#5B21B6"
-C_USER_S    = "#4F8DFD"
-C_USER_E    = "#2D6CF6"
-C_USER_AV_S = "#2D6CF6"
-C_USER_AV_E = "#1E4FD0"
-C_CODE_BG   = "#1E2A3A"
-C_CHAT_BG   = "#FAFBFE"
-C_PANEL_BG  = "#EEF2FA"
-C_SIDEBAR   = "#F7F9FD"
-C_BORDER    = "#EEF1F7"
-C_SUBTLE    = "#94A3B8"
-C_DARK      = "#1E293B"
+C_AI_PRIME  = "#7C5CFC"   # 主题紫色
+C_AI_BADGE  = "#E6E6FA"   # 浅紫（选中项背景、按钮背景）
+C_USER_BLUE = "#5971F2"   # 用户气泡蓝
+C_CODE_BG   = "#1E2A3A"   # 代码块深色背景
+C_BG        = "#F4F6FA"   # 全局背景浅蓝灰
+C_SIDEBAR   = "#FFFFFF"   # 侧栏白
+C_BORDER    = "#E5E5E5"   # 边框灰
+C_SUBTLE    = "#8C8C8C"   # 次级文字灰
+C_DARK      = "#1E293B"   # 主文字深色
 C_WHITE     = "#FFFFFF"
-C_CHIP_BRD  = "#E5EAF3"
-C_INACTIVE  = "#CBD5E1"
 
 
 class AIPanel(BasePanel):
@@ -96,10 +88,10 @@ class AIPanel(BasePanel):
         brand_layout.setSpacing(14)
 
         icon = QLabel("🤖")
-        icon.setFixedSize(44, 44)
+        icon.setFixedSize(40, 40)
         icon.setAlignment(Qt.AlignCenter)
         icon.setStyleSheet(f"""
-            background:{C_AI_END}; border-radius:13px;
+            background:{C_AI_PRIME}; border-radius:13px;
             font-size:24px;
         """)
         brand_layout.addWidget(icon)
@@ -133,8 +125,8 @@ class AIPanel(BasePanel):
         add.setCursor(Qt.PointingHandCursor)
         add.setStyleSheet(f"""
             QPushButton {{
-                background:{C_AI_BADGE}; color:{C_AI_END}; border:none;
-                border-radius:12px; font-size:20px; font-weight:700;
+                background:{C_AI_BADGE}; color:{C_AI_PRIME}; border:none;
+                border-radius:12px; font-size:16px; font-weight:700;
             }}
             QPushButton:hover {{ background:#DDD4FA; }}
         """)
@@ -210,11 +202,11 @@ class AIPanel(BasePanel):
         tl = QLabel(title_text)
         tl.setStyleSheet(
             f"font-size:14px; font-weight:{'700' if active else '600'};"
-            f"color:{C_AI_TEXT if active else C_DARK};")
+            f"color:{C_AI_PRIME if active else C_DARK};")
         il.addWidget(tl)
         sl = QLabel(subtitle)
         sl.setStyleSheet(
-            f"font-size:12px; color:{C_AI_END if active else C_SUBTLE};")
+            f"font-size:12px; color:{C_AI_PRIME if active else C_SUBTLE};")
         il.addWidget(sl)
         return item
 
@@ -230,7 +222,7 @@ class AIPanel(BasePanel):
 
     def _create_header(self):
         h = QFrame()
-        h.setFixedHeight(72)
+        h.setFixedHeight(80)
         h.setStyleSheet(
             f"background:{C_SIDEBAR}; border-bottom:1px solid {C_BORDER};")
         hl = QHBoxLayout(h)
@@ -239,12 +231,12 @@ class AIPanel(BasePanel):
 
         # 圆形头像
         av = QLabel("✨")
-        av.setFixedSize(50, 50)
+        av.setFixedSize(40, 40)
         av.setAlignment(Qt.AlignCenter)
         av.setStyleSheet(f"""
             background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                stop:0 {C_AI_START}, stop:1 {C_AI_END});
-            color:white; border-radius:25px; font-size:24px;
+                stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
+            color:white; border-radius:20px; font-size:24px;
         """)
         hl.addWidget(av)
 
@@ -254,12 +246,12 @@ class AIPanel(BasePanel):
         nr = QHBoxLayout()
         nr.setSpacing(9)
         nm = QLabel("AI 助手")
-        nm.setStyleSheet(f"font-size:18px; font-weight:800; color:{C_DARK};")
+        nm.setStyleSheet(f"font-size:16px; font-weight:800; color:{C_DARK};")
         nr.addWidget(nm)
         bd = QLabel("智能问答")
         bd.setFixedHeight(22)
         bd.setStyleSheet(f"""
-            font-size:12px; font-weight:700; color:{C_AI_END};
+            font-size:12px; font-weight:700; color:{C_AI_PRIME};
             background:{C_AI_BADGE}; padding:2px 9px; border-radius:8px;
         """)
         nr.addWidget(bd)
@@ -277,7 +269,7 @@ class AIPanel(BasePanel):
         nb.setCursor(Qt.PointingHandCursor)
         nb.setStyleSheet(f"""
             QPushButton {{
-                background:{C_AI_BADGE}; color:{C_AI_END}; border:none;
+                background:{C_AI_BADGE}; color:{C_AI_PRIME}; border:none;
                 border-radius:13px; font-size:14px; font-weight:600;
                 padding:0 16px;
             }}
@@ -296,7 +288,7 @@ class AIPanel(BasePanel):
         self._msg_scroll.setWidgetResizable(True)
         self._msg_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._msg_scroll.setStyleSheet(
-            f"QScrollArea {{ border:none; background:{C_CHAT_BG}; }}"
+            f"QScrollArea {{ border:none; background:{C_BG}; }}"
             "QScrollBar:vertical { width:6px; background:transparent; }"
             "QScrollBar::handle:vertical { background:rgba(100,116,139,0.22);"
             "border-radius:3px; min-height:20px; }")
@@ -329,7 +321,7 @@ class AIPanel(BasePanel):
 
     def _create_composer(self):
         c = QFrame()
-        c.setStyleSheet(f"background:{C_PANEL_BG};")
+        c.setStyleSheet(f"background:{C_BG};")
         cl = QVBoxLayout(c)
         cl.setContentsMargins(24, 16, 24, 20)
         cl.setSpacing(13)
@@ -349,13 +341,13 @@ class AIPanel(BasePanel):
             chip.setCursor(Qt.PointingHandCursor)
             chip.setStyleSheet(f"""
                 QPushButton {{
-                    background:{C_WHITE}; border:1.5px solid {C_CHIP_BRD};
+                    background:{C_WHITE}; border:1.5px solid {C_BORDER};
                     border-radius:22px; font-size:13px; color:#64748B;
                     padding:0 14px;
                 }}
                 QPushButton:hover {{
-                    background:{C_AI_BADGE}; border-color:{C_AI_START};
-                    color:{C_AI_END};
+                    background:{C_AI_BADGE}; border-color:{C_AI_PRIME};
+                    color:{C_AI_PRIME};
                 }}
             """)
             chip.clicked.connect(lambda _, x=p: self._send_quick(x))
@@ -373,9 +365,9 @@ class AIPanel(BasePanel):
         self._input_field = QLineEdit()
         self._input_field.setPlaceholderText(
             "问我学习、工作和校园生活方面的问题…")
-        self._input_field.setMinimumHeight(32)
+        self._input_field.setMinimumHeight(48)
         self._input_field.setStyleSheet(
-            f"border:none; background:transparent; font-size:15px;"
+            f"border:none; background:transparent; font-size:14px;"
             f"color:{C_DARK};")
         self._input_field.returnPressed.connect(self._on_send)
         icl.addWidget(self._input_field, 1)
@@ -387,7 +379,7 @@ class AIPanel(BasePanel):
         self._send_btn.setStyleSheet(f"""
             QPushButton {{
                 background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                    stop:0 {C_AI_START}, stop:1 {C_AI_END});
+                    stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
                 color:white; border:none; border-radius:15px;
                 font-size:22px;
             }}
@@ -416,12 +408,12 @@ class AIPanel(BasePanel):
         lo.setDirection(QHBoxLayout.RightToLeft)
 
         av = QLabel("我")
-        av.setFixedSize(42, 42)
+        av.setFixedSize(40, 40)
         av.setAlignment(Qt.AlignCenter)
         av.setStyleSheet(f"""
             background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                stop:0 {C_USER_AV_S}, stop:1 {C_USER_AV_E});
-            color:white; border-radius:21px; font-size:16px; font-weight:700;
+                stop:0 {C_USER_BLUE}, stop:1 {C_USER_BLUE});
+            color:white; border-radius:20px; font-size:16px; font-weight:700;
         """)
         lo.addWidget(av)
 
@@ -441,9 +433,9 @@ class AIPanel(BasePanel):
         bf.setStyleSheet(f"""
             QFrame {{
                 background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                    stop:0 {C_USER_S}, stop:1 {C_USER_E});
-                border-top-left-radius:18px; border-top-right-radius:5px;
-                border-bottom-right-radius:18px; border-bottom-left-radius:18px;
+                    stop:0 {C_USER_BLUE}, stop:1 {C_USER_BLUE});
+                border-radius:12px;
+                
             }}
         """)
         bl = QVBoxLayout(bf)
@@ -453,7 +445,7 @@ class AIPanel(BasePanel):
         bt.setMaximumWidth(480)
         bt.setTextFormat(Qt.PlainText)
         bt.setStyleSheet(
-            "color:white; font-size:15px; background:transparent; border:none;")
+            "color:white; font-size:14px; background:transparent; border:none;")
         bt.setContentsMargins(0, 0, 0, 0)
         bl.addWidget(bt)
         tl.addWidget(bf, alignment=Qt.AlignRight)
@@ -474,12 +466,12 @@ class AIPanel(BasePanel):
         lo.setSpacing(13)
 
         av = QLabel("✨")
-        av.setFixedSize(42, 42)
+        av.setFixedSize(40, 40)
         av.setAlignment(Qt.AlignCenter)
         av.setStyleSheet(f"""
             background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                stop:0 {C_AI_START}, stop:1 {C_AI_END});
-            color:white; border-radius:21px; font-size:20px;
+                stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
+            color:white; border-radius:20px; font-size:16px;
         """)
         lo.addWidget(av)
 
@@ -496,8 +488,8 @@ class AIPanel(BasePanel):
         bf.setStyleSheet(f"""
             QFrame {{
                 background:{C_WHITE}; border:1px solid #E7EFFC;
-                border-top-left-radius:5px; border-top-right-radius:18px;
-                border-bottom-right-radius:18px; border-bottom-left-radius:18px;
+                border-radius:12px;
+                
             }}
         """)
         bl = QVBoxLayout(bf)
@@ -507,7 +499,7 @@ class AIPanel(BasePanel):
         bt.setMaximumWidth(520)
         bt.setTextFormat(Qt.RichText)
         bt.setStyleSheet(
-            f"color:{C_DARK}; font-size:15px; background:transparent; border:none;")
+            f"color:{C_DARK}; font-size:14px; background:transparent; border:none;")
         bt.setContentsMargins(0, 0, 0, 0)
         bl.addWidget(bt)
         tl.addWidget(bf)
@@ -525,8 +517,8 @@ class AIPanel(BasePanel):
         block.setStyleSheet(f"""
             QFrame {{
                 background:{C_CODE_BG};
-                border-top-left-radius:5px; border-top-right-radius:16px;
-                border-bottom-right-radius:16px; border-bottom-left-radius:16px;
+                border-radius:12px;
+                
             }}
         """)
         block.setMaximumWidth(520)
@@ -623,12 +615,12 @@ class AIPanel(BasePanel):
                 lo.setSpacing(13)
 
                 av = QLabel("✨")
-                av.setFixedSize(42, 42)
+                av.setFixedSize(40, 40)
                 av.setAlignment(Qt.AlignCenter)
                 av.setStyleSheet(f"""
                     background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                        stop:0 {C_AI_START}, stop:1 {C_AI_END});
-                    color:white; border-radius:21px; font-size:20px;
+                        stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
+                    color:white; border-radius:20px; font-size:16px;
                 """)
                 lo.addWidget(av)
 
@@ -645,8 +637,8 @@ class AIPanel(BasePanel):
                 bf.setStyleSheet(f"""
                     QFrame {{
                         background:{C_WHITE}; border:1px solid #E7EFFC;
-                        border-top-left-radius:5px; border-top-right-radius:18px;
-                        border-bottom-right-radius:18px; border-bottom-left-radius:18px;
+                        border-radius:12px;
+                        
                     }}
                 """)
                 bl = QVBoxLayout(bf)
@@ -656,7 +648,7 @@ class AIPanel(BasePanel):
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.PlainText)
                 bt.setStyleSheet(
-                    f"color:{C_DARK}; font-size:15px; background:transparent; border:none;")
+                    f"color:{C_DARK}; font-size:14px; background:transparent; border:none;")
                 bt.setContentsMargins(0, 0, 0, 0)
                 bl.addWidget(bt)
                 tl.addWidget(bf)
@@ -721,12 +713,12 @@ class AIPanel(BasePanel):
         hr = QHBoxLayout()
         hr.setSpacing(13)
         av = QLabel("✨")
-        av.setFixedSize(42, 42)
+        av.setFixedSize(40, 40)
         av.setAlignment(Qt.AlignCenter)
         av.setStyleSheet(f"""
             background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                stop:0 {C_AI_START}, stop:1 {C_AI_END});
-            color:white; border-radius:21px; font-size:20px;
+                stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
+            color:white; border-radius:20px; font-size:16px;
         """)
         hr.addWidget(av)
         info = QLabel(f"AI 助手 · {ts_str}")
@@ -741,8 +733,8 @@ class AIPanel(BasePanel):
                 bf.setStyleSheet(f"""
                     QFrame {{
                         background:{C_WHITE}; border:1px solid #E7EFFC;
-                        border-top-left-radius:5px; border-top-right-radius:18px;
-                        border-bottom-right-radius:18px; border-bottom-left-radius:18px;
+                        border-radius:12px;
+                        
                     }}
                 """)
                 bl = QVBoxLayout(bf)
@@ -752,7 +744,7 @@ class AIPanel(BasePanel):
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.RichText)
                 bt.setStyleSheet(
-                    f"color:{C_DARK}; font-size:15px; background:transparent; border:none;")
+                    f"color:{C_DARK}; font-size:14px; background:transparent; border:none;")
                 bt.setContentsMargins(0, 0, 0, 0)
                 bl.addWidget(bt)
                 cl.addWidget(bf)
@@ -769,12 +761,12 @@ class AIPanel(BasePanel):
         lo.setContentsMargins(0, 0, 0, 0)
         lo.setSpacing(13)
         av = QLabel("✨")
-        av.setFixedSize(42, 42)
+        av.setFixedSize(40, 40)
         av.setAlignment(Qt.AlignCenter)
         av.setStyleSheet(f"""
             background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                stop:0 {C_AI_START}, stop:1 {C_AI_END});
-            color:white; border-radius:21px; font-size:20px;
+                stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
+            color:white; border-radius:20px; font-size:16px;
         """)
         lo.addWidget(av)
         info = QLabel("AI 助手 · 正在思考…")
