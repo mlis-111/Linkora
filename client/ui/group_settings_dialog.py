@@ -367,13 +367,15 @@ class GroupSettingsDialog(QDialog):
         self._save_name_btn.setVisible(False)
 
     def _on_save_remark(self):
-        """保存个人备注"""
+        """保存个人备注并刷新群列表"""
         remark = self._remark_input.text().strip()
         self._app.net.send({
             "type": MT.GROUP_SET_REMARK,
             "group_id": self._group_id,
             "remark": remark,
         })
+        # 直接刷新群列表，让左侧和头部显示备注
+        self._app.net.send({"type": MT.GROUP_LIST})
 
     def _on_add_member(self):
         """添加成员 — 弹出好友选择对话框"""
@@ -445,6 +447,10 @@ class GroupSettingsDialog(QDialog):
         # 更新群名输入框
         self._name_input.setText(self._group_name)
 
+        # 更新个人备注输入框
+        my_remark = msg.get("my_remark", "")
+        self._remark_input.setText(my_remark)
+
         # 管理员/群主可编辑群名
         can_edit_name = (
             self._my_role == self.ROLE_ADMIN
@@ -473,14 +479,26 @@ class GroupSettingsDialog(QDialog):
         self._group_name = new_name
         self._name_input.setText(new_name)
 
+
+    def _on_admin_set(self, msg):
+        """收到设置管理员响应"""
+        if msg.get("ok"):
+            role = msg.get("role", 0)
+            action = "设为管理员" if role == 1 else "取消管理员"
+            QMessageBox.information(self, "成功", f"已{action}")
+            # 重新获取群设置信息以刷新界面
+            self._app.net.send({
+                "type": MT.GROUP_INFO,
+                "group_id": self._group_id,
+            })
+
     def showEvent(self, event):
         """显示时订阅消息"""
         super().showEvent(event)
         self._app.net.on(MT.GROUP_INFO_RESP, self._on_info_resp)
         self._app.net.on(MT.GROUP_NAME_UPDATED, self._on_name_updated)
+        self._app.net.on(MT.GROUP_SET_ADMIN, self._on_admin_set)
 
     def hideEvent(self, event):
         """隐藏时取消订阅"""
         super().hideEvent(event)
-        # 取消订阅的方式：从 NetworkClient._subs 中移除
-        # 这里靠对话框关闭后不再触发来间接处理
