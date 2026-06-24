@@ -193,13 +193,15 @@ class AIPanel(BasePanel):
 
     def _create_history_item(self, title_text, subtitle, active=False):
         item = QFrame()
+        item.setObjectName("HistoryItem")
+        item.setProperty("selected", "true" if active else "false")
         item.setCursor(Qt.PointingHandCursor)
         item.setStyleSheet(
-            f"QFrame {{ background:{C_AI_BADGE if active else 'transparent'};"
-            f"border-radius:16px; }}"
-            f"QFrame:hover {{ background:{'#D4CDF2' if active else 'rgba(237,233,254,0.5)'}; }}")
+            "QWidget#HistoryItem { margin:4px 12px; padding:10px 14px; border-radius:8px; }"
+            "QWidget#HistoryItem[selected=\"true\"] { background:#E6E6FA; }"
+            "QWidget#HistoryItem:hover { background:rgba(230,230,250,0.5); }")
         il = QVBoxLayout(item)
-        il.setContentsMargins(14, 10, 14, 10)
+        il.setContentsMargins(0, 0, 0, 0)
         il.setSpacing(4)
         tl = QLabel(title_text)
         tl.setObjectName("HistoryItemTitle")
@@ -375,7 +377,8 @@ class AIPanel(BasePanel):
         self._input_field.setMinimumHeight(48)
         self._input_field.setStyleSheet(
             f"border:none; background:transparent; font-size:15px;"
-            f"color:{C_DARK}; padding-left:16px;")
+            f"color:{C_DARK}; padding-left:16px; padding-right:16px;"
+            f"border-radius:24px;")
         self._input_field.returnPressed.connect(self._on_send)
         icl.addWidget(self._input_field, 1)
 
@@ -439,12 +442,15 @@ class AIPanel(BasePanel):
         bf.setObjectName("UserBubble")
         bf.setStyleSheet(f"""
             QFrame#UserBubble {{
-                background:{C_USER_BLUE}; border-radius:12px;
+                background:{C_USER_BLUE}; color:#FFFFFF;
+                border-radius:12px; border-top-right-radius:4px;
+                padding:12px 16px; font-size:15px;
             }}
         """)
         bl = QVBoxLayout(bf)
-        bl.setContentsMargins(14, 12, 14, 12)
+        bl.setContentsMargins(0, 0, 0, 0)
         bt = QLabel(text)
+        bt.setObjectName("UserBubbleText")
         bt.setWordWrap(True)
         bt.setMaximumWidth(480)
         bt.setTextFormat(Qt.PlainText)
@@ -492,18 +498,20 @@ class AIPanel(BasePanel):
         bf.setObjectName("AIBubble")
         bf.setStyleSheet(f"""
             QFrame#AIBubble {{
-                background:{C_WHITE}; border:1px solid {C_BORDER};
-                border-radius:12px;
+                background:{C_WHITE}; border:1px solid #DDDDDD;
+                border-radius:12px; border-top-left-radius:4px;
+                padding:12px 16px; font-size:15px;
             }}
         """)
         bl = QVBoxLayout(bf)
-        bl.setContentsMargins(16, 14, 16, 14)
+        bl.setContentsMargins(0, 0, 0, 0)
         bt = QLabel(text)
+        bt.setObjectName("AIBubbleText")
         bt.setWordWrap(True)
         bt.setMaximumWidth(520)
         bt.setTextFormat(Qt.RichText)
         bt.setStyleSheet(
-            f"color:#222222; font-size:15px; background:transparent; border:none;")
+            "color:#222222; font-size:15px; background:transparent; border:none;")
         bt.setContentsMargins(0, 0, 0, 0)
         bl.addWidget(bt)
         tl.addWidget(bf)
@@ -641,18 +649,20 @@ class AIPanel(BasePanel):
                 bf.setObjectName("AIBubble")
                 bf.setStyleSheet(f"""
                     QFrame#AIBubble {{
-                        background:{C_WHITE}; border:1px solid {C_BORDER};
-                        border-radius:12px;
+                        background:{C_WHITE}; border:1px solid #DDDDDD;
+                        border-radius:12px; border-top-left-radius:4px;
+                        padding:12px 16px; font-size:15px;
                     }}
                 """)
                 bl = QVBoxLayout(bf)
-                bl.setContentsMargins(16, 14, 16, 14)
+                bl.setContentsMargins(0, 0, 0, 0)
                 bt = QLabel("")
+                bt.setObjectName("AIBubbleText")
                 bt.setWordWrap(True)
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.PlainText)
                 bt.setStyleSheet(
-                    f"color:#222222; font-size:15px; background:transparent; border:none;")
+                    "color:#222222; font-size:15px; background:transparent; border:none;")
                 bt.setContentsMargins(0, 0, 0, 0)
                 bl.addWidget(bt)
                 tl.addWidget(bf)
@@ -737,18 +747,20 @@ class AIPanel(BasePanel):
                 bf.setObjectName("AIBubble")
                 bf.setStyleSheet(f"""
                     QFrame#AIBubble {{
-                        background:{C_WHITE}; border:1px solid {C_BORDER};
-                        border-radius:12px;
+                        background:{C_WHITE}; border:1px solid #DDDDDD;
+                        border-radius:12px; border-top-left-radius:4px;
+                        padding:12px 16px; font-size:15px;
                     }}
                 """)
                 bl = QVBoxLayout(bf)
-                bl.setContentsMargins(16, 14, 16, 14)
+                bl.setContentsMargins(0, 0, 0, 0)
                 bt = QLabel(part["content"])
+                bt.setObjectName("AIBubbleText")
                 bt.setWordWrap(True)
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.RichText)
                 bt.setStyleSheet(
-                    f"color:#222222; font-size:15px; background:transparent; border:none;")
+                    "color:#222222; font-size:15px; background:transparent; border:none;")
                 bt.setContentsMargins(0, 0, 0, 0)
                 bl.addWidget(bt)
                 cl.addWidget(bf)
