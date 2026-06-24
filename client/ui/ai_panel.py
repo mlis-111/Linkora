@@ -81,7 +81,7 @@ class AIPanel(BasePanel):
 
     def _create_sidebar(self):
         sidebar = QFrame()
-        sidebar.setFixedWidth(280)
+        sidebar.setFixedWidth(320)
         sidebar.setStyleSheet(
             f"background:{C_SIDEBAR}; border-right:1px solid #E5EAF3;")
 
@@ -89,13 +89,42 @@ class AIPanel(BasePanel):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # 标题行
+        # ── 品牌区 ──
+        brand = QWidget()
+        brand_layout = QHBoxLayout(brand)
+        brand_layout.setContentsMargins(24, 24, 24, 18)
+        brand_layout.setSpacing(14)
+
+        icon = QLabel("🤖")
+        icon.setFixedSize(44, 44)
+        icon.setAlignment(Qt.AlignCenter)
+        icon.setStyleSheet(f"""
+            background:{C_AI_END}; border-radius:13px;
+            font-size:24px;
+        """)
+        brand_layout.addWidget(icon)
+
+        brand_text = QLabel("校园通\nAI 智能助手")
+        brand_text.setStyleSheet(
+            f"font-size:16px; font-weight:800; color:{C_DARK}; line-height:1.3;")
+        brand_layout.addWidget(brand_text)
+        brand_layout.addStretch()
+        layout.addWidget(brand)
+
+        # ── 分隔线 ──
+        sep = QFrame()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet(
+            "background:#E5EAF3; margin:0 24px;")
+        layout.addWidget(sep)
+
+        # ── 标题行 ──
         tr = QWidget()
         tr_layout = QHBoxLayout(tr)
-        tr_layout.setContentsMargins(20, 22, 20, 14)
+        tr_layout.setContentsMargins(24, 18, 24, 10)
         title = QLabel("历史对话")
         title.setStyleSheet(
-            f"font-size:20px; font-weight:800; color:{C_DARK};")
+            f"font-size:16px; font-weight:700; color:{C_DARK};")
         tr_layout.addWidget(title)
         tr_layout.addStretch()
 
@@ -116,7 +145,7 @@ class AIPanel(BasePanel):
         # 搜索框
         sc = QWidget()
         sc_layout = QHBoxLayout(sc)
-        sc_layout.setContentsMargins(20, 0, 20, 14)
+        sc_layout.setContentsMargins(24, 0, 24, 14)
         sb = QFrame()
         sb.setFixedHeight(44)
         sb.setStyleSheet(
@@ -145,7 +174,7 @@ class AIPanel(BasePanel):
             "QScrollBar::handle:vertical { background:#D0D5DD; border-radius:2px; }")
         self._history_content = QWidget()
         self._history_layout = QVBoxLayout(self._history_content)
-        self._history_layout.setContentsMargins(12, 0, 12, 0)
+        self._history_layout.setContentsMargins(16, 0, 16, 0)
         self._history_layout.setSpacing(4)
         self._history_layout.setAlignment(Qt.AlignTop)
         scroll.setWidget(self._history_content)
