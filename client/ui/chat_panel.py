@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 from client.core.base_panel import BasePanel
 from common.messages import MT, PUBLIC_ROOM_ID
+from client.ui.group_settings_dialog import GroupSettingsDialog
 
 
 # 头像颜色池
@@ -51,6 +52,7 @@ class ChatPanel(BasePanel):
         self.net.on(MT.FRIEND_LIST_RESP, self._on_friend_list)
         self.net.on(MT.GROUP_LIST_RESP, self._on_group_list)
         self.net.on(MT.GROUP_JOIN_RESP, self._on_group_join)
+        self.net.on(MT.GROUP_NAME_UPDATED, self._on_group_name_updated)
         self._build_ui()
 
     def showEvent(self, event):
@@ -363,6 +365,9 @@ class ChatPanel(BasePanel):
                 if g["group_id"] == group_id:
                     group_name = g["group_name"]
                     break
+            # 群聊数据尚未加载时，显示"加载中…"而不是群ID
+            if group_name == group_id:
+                group_name = "加载中…"
             preview = self._last_msg_previews.get(key, "")
             count = self._unread_counts.get(key, 0)
             subtitle = preview if preview else "点击进入群聊"
@@ -536,6 +541,21 @@ class ChatPanel(BasePanel):
         hl.addWidget(self._chat_badge)
         hl.addStretch()
 
+        # 群设置按钮（仅在查看群聊时显示）
+        self._settings_btn = QPushButton("⚙")
+        self._settings_btn.setFixedSize(42, 42)
+        self._settings_btn.setCursor(Qt.PointingHandCursor)
+        self._settings_btn.setVisible(False)
+        self._settings_btn.setStyleSheet("""
+            QPushButton {
+                background: transparent; color: #94A3B8; border: none;
+                border-radius: 12px; font-size: 22px;
+            }
+            QPushButton:hover { background: #F1F5FB; color: #64748B; }
+        """)
+        self._settings_btn.clicked.connect(self._on_open_settings)
+        hl.addWidget(self._settings_btn)
+
         self._online_label = QLabel("")
         self._online_label.setStyleSheet("font-size: 15px; color: #64748B;")
         hl.addWidget(self._online_label)
@@ -638,9 +658,11 @@ class ChatPanel(BasePanel):
         if target["type"] == "room":
             self._chat_title.setText(target["name"])
             self._chat_badge.setText("群聊")
+            self._settings_btn.setVisible(True)
         else:
             self._chat_title.setText(target["name"])
             self._chat_badge.setText("")
+            self._settings_btn.setVisible(False)
 
         online_count = len(self.state.online_users)
         self._online_label.setText(f"● {online_count} 人在线")
@@ -665,6 +687,41 @@ class ChatPanel(BasePanel):
             g = self._my_groups[0]
             self._on_contact_selected({"id": g["group_id"], "name": g["group_name"], "type": "room"})
             return
+
+    def _on_open_settings(self):
+        """打开群设置对话框"""
+        if not self._current_target or self._current_target["type"] != "room":
+            return
+        dlg = GroupSettingsDialog(
+            self.app,
+            self._current_target["id"],
+            self._current_target["name"],
+            self,
+        )
+        dlg.exec_()
+
+    def _on_group_name_updated(self, msg):
+        """收到群名变更广播 — 更新本地缓存的群名"""
+        group_id = msg.get("group_id", "")
+        new_name = msg.get("group_name", "")
+        if not group_id or not new_name:
+            return
+
+        # 更新 _my_groups 中的缓存
+        for g in self._my_groups:
+            if g["group_id"] == group_id:
+                g["group_name"] = new_name
+                break
+
+        # 如果正在查看该群聊，更新标题
+        if (self._current_target
+                and self._current_target["type"] == "room"
+                and self._current_target["id"] == group_id):
+            self._current_target["name"] = new_name
+            self._chat_title.setText(new_name)
+
+        # 刷新左侧列表
+        self._refresh_conv_list()
 
     # ==================== 消息收发 ====================
 
@@ -744,6 +801,10 @@ class ChatPanel(BasePanel):
         ts = msg.get("ts", "")
         sender_name = self._find_user_name(sender_id)
         key = f"room_{room_id}"
+
+        # 如果收到的群聊消息来自一个尚未加载的群，主动获取列表
+        if not any(g["group_id"] == room_id for g in self._my_groups):
+            self.net.send({"type": MT.GROUP_LIST})
 
         # 更新对应群聊的预览和时间
         preview = (plain[:28] + "…") if len(plain) > 28 else plain

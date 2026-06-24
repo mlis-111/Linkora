@@ -81,6 +81,8 @@ CREATE TABLE group_member (
     group_id VARCHAR(32) NOT NULL,
     user_id INT NOT NULL,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    role   TINYINT     NOT NULL DEFAULT 0 COMMENT '0=成员, 1=管理员',
+    remark VARCHAR(100) NOT NULL DEFAULT '' COMMENT '用户对该群的个人备注',
     PRIMARY KEY (group_id, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

@@ -26,6 +26,11 @@ def register(router, ctx):
     router.register(MT.GROUP_LIST, _handle_list)
     router.register(MT.GROUP_MEMBERS, _handle_members)
     router.register(MT.GROUP_INVITE, _handle_invite)
+    router.register(MT.GROUP_INFO, _handle_info_req)
+    router.register(MT.GROUP_UPDATE_NAME, _handle_update_name)
+    router.register(MT.GROUP_SET_REMARK, _handle_set_remark)
+    router.register(MT.GROUP_REMOVE_MEMBER, _handle_remove_member)
+    router.register(MT.GROUP_SET_ADMIN, _handle_set_admin)
 
 
 def _handle_create(session, msg):
@@ -70,6 +75,15 @@ def _handle_create(session, msg):
         "group_name": group_name,
         "added": added,
     })
+
+    # 通知被邀请的成员（带上 group_name，确保受邀者界面正确显示群名）
+    if added:
+        ctx.online.broadcast_to({
+            "type": MT.GROUP_INVITE,
+            "group_id": group_id,
+            "group_name": group_name,
+            "invited_by": owner_id,
+        }, added)
 
 
 def _handle_join(session, msg):
@@ -203,4 +217,246 @@ def _handle_invite(session, msg):
         "group_id": group_id,
         "added": added,
         "skipped": skipped,
+    })
+
+    # 通知被邀请的新成员（带上 group_name）
+    if added:
+        ctx.online.broadcast_to({
+            "type": MT.GROUP_INVITE,
+            "group_id": group_id,
+            "group_name": group.get("group_name", ""),
+            "invited_by": user_id,
+        }, added)
+
+
+def _handle_info_req(session, msg):
+    """查询群设置信息
+
+    返回群信息、成员列表（含角色和在线状态）、当前用户的角色。
+
+    Args:
+        session: Session 实例
+        msg: 消息字典，包含 group_id
+    """
+    ctx = session.ctx
+    group_id = msg.get("group_id", "")
+    user_id = session.user_id
+
+    if not group_id:
+        session.send(error("INVALID_PARAM", "缺少群聊ID"))
+        return
+
+    group = ctx.db.groups.get_by_id(group_id)
+    if not group:
+        session.send(error("NOT_FOUND", "群聊不存在"))
+        return
+
+    if not ctx.db.groups.is_member(group_id, user_id):
+        session.send(error("NOT_MEMBER", "你不是该群成员"))
+        return
+
+    # 获取成员列表并标注在线状态
+    members = ctx.db.groups.list_members(group_id)
+    member_list = []
+    for m in members:
+        member_list.append({
+            "user_id": m["user_id"],
+            "username": m["username"],
+            "nickname": m.get("nickname", ""),
+            "role": m.get("role", 0),
+            "online": ctx.online.is_online(m["user_id"]),
+        })
+
+    # 当前用户的角色
+    my_role = ctx.db.groups.get_role(group_id, user_id)
+
+    session.send({
+        "type": MT.GROUP_INFO_RESP,
+        "group_id": group_id,
+        "group_name": group.get("group_name", ""),
+        "owner_id": group.get("owner_id"),
+        "my_role": my_role,
+        "members": member_list,
+    })
+
+
+def _handle_update_name(session, msg):
+    """更新群聊名称（群主或管理员可操作）
+
+    Args:
+        session: Session 实例
+        msg: 消息字典，包含 group_id, group_name
+    """
+    ctx = session.ctx
+    group_id = msg.get("group_id", "")
+    new_name = msg.get("group_name", "").strip()
+    user_id = session.user_id
+
+    if not group_id or not new_name:
+        session.send(error("INVALID_PARAM", "参数不完整"))
+        return
+
+    group = ctx.db.groups.get_by_id(group_id)
+    if not group:
+        session.send(error("NOT_FOUND", "群聊不存在"))
+        return
+
+    # 校验权限：群主或管理员
+    is_owner = group.get("owner_id") == user_id
+    is_admin = ctx.db.groups.get_role(group_id, user_id) == 1
+    if not is_owner and not is_admin:
+        session.send(error("FORBIDDEN", "无权修改群名"))
+        return
+
+    ctx.db.groups.update_name(group_id, new_name)
+
+    session.send({
+        "type": MT.GROUP_UPDATE_NAME,
+        "ok": True,
+        "group_id": group_id,
+        "group_name": new_name,
+    })
+
+    # 广播群名变更给所有在线群成员
+    member_ids = ctx.db.groups.list_member_ids(group_id)
+    ctx.online.broadcast_to({
+        "type": MT.GROUP_NAME_UPDATED,
+        "group_id": group_id,
+        "group_name": new_name,
+        "updated_by": user_id,
+    }, member_ids)
+
+
+def _handle_set_remark(session, msg):
+    """设置用户对群聊的个人备注
+
+    Args:
+        session: Session 实例
+        msg: 消息字典，包含 group_id, remark
+    """
+    ctx = session.ctx
+    group_id = msg.get("group_id", "")
+    remark = msg.get("remark", "").strip()
+    user_id = session.user_id
+
+    if not group_id:
+        session.send(error("INVALID_PARAM", "缺少群聊ID"))
+        return
+
+    # 校验自己是否为群成员
+    if not ctx.db.groups.is_member(group_id, user_id):
+        session.send(error("NOT_MEMBER", "你不是该群成员"))
+        return
+
+    ctx.db.groups.set_remark(user_id, group_id, remark)
+
+    session.send({
+        "type": MT.GROUP_SET_REMARK,
+        "ok": True,
+    })
+
+
+def _handle_remove_member(session, msg):
+    """移除群成员（群主或管理员可操作）
+
+    管理员不能移除其他管理员和群主，仅群主可移除管理员。
+
+    Args:
+        session: Session 实例
+        msg: 消息字典，包含 group_id, target_id
+    """
+    ctx = session.ctx
+    group_id = msg.get("group_id", "")
+    target_id = msg.get("target_id")
+    user_id = session.user_id
+
+    if not group_id or not target_id:
+        session.send(error("INVALID_PARAM", "参数不完整"))
+        return
+
+    group = ctx.db.groups.get_by_id(group_id)
+    if not group:
+        session.send(error("NOT_FOUND", "群聊不存在"))
+        return
+
+    # 不能移除群主
+    if target_id == group.get("owner_id"):
+        session.send(error("FORBIDDEN", "不能移除群主"))
+        return
+
+    # 校验权限
+    is_owner = group.get("owner_id") == user_id
+    is_admin = ctx.db.groups.get_role(group_id, user_id) == 1
+    if not is_owner and not is_admin:
+        session.send(error("FORBIDDEN", "无权移除成员"))
+        return
+
+    # 管理员不能移除其他管理员
+    target_role = ctx.db.groups.get_role(group_id, target_id)
+    if not is_owner and target_role == 1:
+        session.send(error("FORBIDDEN", "无权移除管理员"))
+        return
+
+    ctx.db.groups.remove_member(group_id, target_id)
+
+    session.send({
+        "type": MT.GROUP_REMOVE_MEMBER,
+        "ok": True,
+        "group_id": group_id,
+        "target_id": target_id,
+    })
+
+    # 通知被移除者（如果在线）
+    ctx.online.send(target_id, {
+        "type": MT.GROUP_REMOVE_MEMBER,
+        "group_id": group_id,
+        "removed_by": user_id,
+    })
+
+
+def _handle_set_admin(session, msg):
+    """设置/取消管理员（仅群主可操作）
+
+    Args:
+        session: Session 实例
+        msg: 消息字典，包含 group_id, target_id, role（1=设为管理员, 0=取消管理员）
+    """
+    ctx = session.ctx
+    group_id = msg.get("group_id", "")
+    target_id = msg.get("target_id")
+    new_role = msg.get("role", 0)
+    user_id = session.user_id
+
+    if not group_id or not target_id:
+        session.send(error("INVALID_PARAM", "参数不完整"))
+        return
+
+    group = ctx.db.groups.get_by_id(group_id)
+    if not group:
+        session.send(error("NOT_FOUND", "群聊不存在"))
+        return
+
+    # 仅群主可操作
+    if group.get("owner_id") != user_id:
+        session.send(error("FORBIDDEN", "仅群主可设置管理员"))
+        return
+
+    # 不能操作群主自己
+    if target_id == user_id:
+        session.send(error("INVALID_PARAM", "不能修改群主角色"))
+        return
+
+    # 目标必须是群成员
+    if not ctx.db.groups.is_member(group_id, target_id):
+        session.send(error("NOT_MEMBER", "该用户不是群成员"))
+        return
+
+    ctx.db.groups.set_role(group_id, target_id, new_role)
+
+    session.send({
+        "type": MT.GROUP_SET_ADMIN,
+        "ok": True,
+        "group_id": group_id,
+        "target_id": target_id,
+        "role": new_role,
     })
