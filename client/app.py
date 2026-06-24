@@ -31,6 +31,32 @@ class ChatClient:
         ]:
             self.main.add_panel(key, cls(self.main, self))
 
+        # 全局样式
+        self.qt_app.setStyleSheet("""
+            QWidget#LeftSidebar  { background-color: #FFFFFF; }
+            QWidget#RightPanel   { background-color: #F4F6FA; }
+
+            QFrame#AIBubble, QWidget#AIBubble {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E5E5;
+                border-radius: 12px;
+            }
+
+            QFrame#UserBubble, QWidget#UserBubble {
+                background-color: #5971F2;
+                color: #FFFFFF;
+                border-radius: 12px;
+            }
+
+            QPushButton#RecommendBtn {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E5E5;
+                border-radius: 16px;
+                padding: 6px 12px;
+                font-size: 13px;
+            }
+        """)
+
     def run(self):
         self.net.connect()
         self.login_win.show()

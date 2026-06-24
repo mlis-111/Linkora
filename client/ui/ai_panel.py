@@ -59,6 +59,7 @@ class AIPanel(BasePanel):
         layout.addWidget(self._create_sidebar())
 
         right = QWidget()
+        right.setObjectName("RightPanel")
         rl = QVBoxLayout(right)
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(0)
@@ -73,6 +74,7 @@ class AIPanel(BasePanel):
 
     def _create_sidebar(self):
         sidebar = QFrame()
+        sidebar.setObjectName("LeftSidebar")
         sidebar.setFixedWidth(320)
         sidebar.setStyleSheet(
             f"background:{C_SIDEBAR}; border-right:1px solid {C_BORDER};")
@@ -434,17 +436,15 @@ class AIPanel(BasePanel):
 
         # 气泡容器（用 QFrame 实现不对称圆角）
         bf = QFrame()
+        bf.setObjectName("UserBubble")
         bf.setStyleSheet(f"""
-            QFrame {{
-                background:{C_USER_BLUE};
-                border-radius:12px;
-                
+            QFrame#UserBubble {{
+                background:{C_USER_BLUE}; border-radius:12px;
             }}
         """)
         bl = QVBoxLayout(bf)
         bl.setContentsMargins(14, 12, 14, 12)
         bt = QLabel(text)
-        bt.setObjectName("UserBubble")
         bt.setWordWrap(True)
         bt.setMaximumWidth(480)
         bt.setTextFormat(Qt.PlainText)
@@ -489,17 +489,16 @@ class AIPanel(BasePanel):
         tl.addWidget(info)
 
         bf = QFrame()
+        bf.setObjectName("AIBubble")
         bf.setStyleSheet(f"""
-            QFrame {{
-                background:{C_WHITE}; border:1px solid #E7EFFC;
+            QFrame#AIBubble {{
+                background:{C_WHITE}; border:1px solid {C_BORDER};
                 border-radius:12px;
-                
             }}
         """)
         bl = QVBoxLayout(bf)
         bl.setContentsMargins(16, 14, 16, 14)
         bt = QLabel(text)
-        bt.setObjectName("AIBubble")
         bt.setWordWrap(True)
         bt.setMaximumWidth(520)
         bt.setTextFormat(Qt.RichText)
@@ -639,17 +638,16 @@ class AIPanel(BasePanel):
                 tl.addWidget(info)
 
                 bf = QFrame()
+                bf.setObjectName("AIBubble")
                 bf.setStyleSheet(f"""
-                    QFrame {{
-                        background:{C_WHITE}; border:1px solid #E7EFFC;
+                    QFrame#AIBubble {{
+                        background:{C_WHITE}; border:1px solid {C_BORDER};
                         border-radius:12px;
-                        
                     }}
                 """)
                 bl = QVBoxLayout(bf)
                 bl.setContentsMargins(16, 14, 16, 14)
                 bt = QLabel("")
-                bt.setObjectName("AIBubble")
                 bt.setWordWrap(True)
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.PlainText)
@@ -736,17 +734,16 @@ class AIPanel(BasePanel):
         for part in parts:
             if part["type"] == "text":
                 bf = QFrame()
+                bf.setObjectName("AIBubble")
                 bf.setStyleSheet(f"""
-                    QFrame {{
-                        background:{C_WHITE}; border:1px solid #E7EFFC;
+                    QFrame#AIBubble {{
+                        background:{C_WHITE}; border:1px solid {C_BORDER};
                         border-radius:12px;
-                        
                     }}
                 """)
                 bl = QVBoxLayout(bf)
                 bl.setContentsMargins(16, 14, 16, 14)
                 bt = QLabel(part["content"])
-                bt.setObjectName("AIBubble")
                 bt.setWordWrap(True)
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.RichText)
