@@ -212,9 +212,9 @@ class TestHandleHistory:
         mock_ctx.db.messages.query_room.return_value = [
             {"sender_id": 100, "receiver_id": None, "content": "hello all", "sent_at": "2024-01-01 10:00:00"},
         ]
-        handle_history(mock_session, {"scope": "room", "room_id": 1})
+        handle_history(mock_session, {"scope": "room", "room_id": "group_public"})
 
-        mock_ctx.db.messages.query_room.assert_called_with(1)
+        mock_ctx.db.messages.query_room.assert_called_with("group_public")
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.HISTORY_RESP

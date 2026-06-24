@@ -39,6 +39,7 @@ class ChatPanel(BasePanel):
         self._last_msg_previews = {}  # key -> 最近消息预览文字
         self._my_groups = []          # 我加入的群聊列表
         self._available_groups = []   # 可加入的群聊列表
+        self._pending_join_dialog = False  # 用户点了"＋"但数据还没加载完
         super().__init__(parent, app)
 
     def subscribe(self):
@@ -51,9 +52,13 @@ class ChatPanel(BasePanel):
         self.net.on(MT.GROUP_LIST_RESP, self._on_group_list)
         self.net.on(MT.GROUP_JOIN_RESP, self._on_group_join)
         self._build_ui()
-        # 请求好友列表和群聊列表
-        self.net.send({"type": MT.FRIEND_LIST})
-        self.net.send({"type": MT.GROUP_LIST})
+
+    def showEvent(self, event):
+        """面板显示时请求初始数据"""
+        super().showEvent(event)
+        if self.state.user_id is not None and not self._my_groups:
+            self.net.send({"type": MT.FRIEND_LIST})
+            self.net.send({"type": MT.GROUP_LIST})
 
     # ==================== 整体UI构建 ====================
 
@@ -126,6 +131,15 @@ class ChatPanel(BasePanel):
         title = QLabel("消息")
         title.setStyleSheet("font-size: 28px; font-weight: 800; color: #1E293B;")
         hl.addWidget(title)
+
+        self._total_unread_badge = QLabel("")
+        self._total_unread_badge.setStyleSheet("""
+            font-size: 13px; font-weight: 700; color: #EF4444;
+            background: #FEE2E2; padding: 2px 10px; border-radius: 10px;
+        """)
+        self._total_unread_badge.hide()
+        hl.addWidget(self._total_unread_badge)
+
         hl.addStretch()
 
         # 加入群聊按钮
@@ -242,6 +256,10 @@ class ChatPanel(BasePanel):
 
         row.addLayout(text_col, 1)
 
+        # 让所有子控件不拦截鼠标事件，确保点击能到达容器
+        for child in container.findChildren(QWidget):
+            child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
         # 点击切换聊天
         container.mousePressEvent = lambda e, t=target: self._on_contact_selected(t)
 
@@ -256,6 +274,14 @@ class ChatPanel(BasePanel):
             if item.widget():
                 item.widget().deleteLater()
         self._conv_items.clear()
+
+        # 更新左侧「消息」标题旁的总未读角标
+        total_unread = sum(self._unread_counts.values())
+        if total_unread > 0:
+            self._total_unread_badge.setText(f"{total_unread} 条未读")
+            self._total_unread_badge.show()
+        else:
+            self._total_unread_badge.hide()
 
         online_ids = {u.get("user_id") for u in self.state.online_users}
         active_key = None
@@ -372,6 +398,13 @@ class ChatPanel(BasePanel):
         """收到群聊列表"""
         self._my_groups = msg.get("my_groups", [])
         self._available_groups = msg.get("available", [])
+
+        # 如果用户在等待加入群聊，自动弹出对话框
+        if self._pending_join_dialog:
+            self._pending_join_dialog = False
+            if self._available_groups:
+                self._show_join_group_dialog()
+
         # 首次加载时默认选中公共聊天室
         if self._current_target is None:
             self._select_room()
@@ -388,11 +421,12 @@ class ChatPanel(BasePanel):
 
     def _show_join_group_dialog(self):
         """显示加入群聊对话框"""
+        # 如果可用列表为空，先请求并标记等待自动弹出
         if not self._available_groups:
-            # 重新请求群聊列表
+            self._pending_join_dialog = True
             self.net.send({"type": MT.GROUP_LIST})
             from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.information(self, "提示", "没有可加入的群聊")
+            QMessageBox.information(self, "提示", "正在加载群聊列表…")
             return
 
         from PyQt5.QtWidgets import QDialog, QVBoxLayout, QListWidget, QPushButton, QListWidgetItem
@@ -423,8 +457,12 @@ class ChatPanel(BasePanel):
 
         for g in self._available_groups:
             item = QListWidgetItem(f"👥  {g['group_name']}  ({g['group_id']})")
-            item.setData(1, g["group_id"])
+            item.setData(Qt.UserRole, g["group_id"])
             list_widget.addItem(item)
+
+        # 默认选中第一项
+        if list_widget.count() > 0:
+            list_widget.setCurrentRow(0)
 
         layout.addWidget(list_widget)
 
@@ -462,8 +500,10 @@ class ChatPanel(BasePanel):
         """执行加入群聊"""
         selected = list_widget.currentItem()
         if not selected:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.information(self, "提示", "请先选择一个群聊")
             return
-        group_id = selected.data(1)
+        group_id = selected.data(Qt.UserRole)
         self.net.send({"type": MT.GROUP_JOIN, "group_id": group_id})
         dialog.accept()
 
@@ -686,6 +726,7 @@ class ChatPanel(BasePanel):
                 self._scroll_to_bottom()
             else:
                 self._new_msg_hint.show()
+            self._refresh_conv_list()  # 刷新左侧预览
         else:
             self._unread_counts[key] = self._unread_counts.get(key, 0) + 1
             self._refresh_conv_list()
@@ -720,6 +761,7 @@ class ChatPanel(BasePanel):
                 self._scroll_to_bottom()
             else:
                 self._new_msg_hint.show()
+            self._refresh_conv_list()  # 刷新左侧预览
         else:
             self._unread_counts[key] = self._unread_counts.get(key, 0) + 1
             self._refresh_conv_list()
@@ -832,9 +874,14 @@ class ChatPanel(BasePanel):
         self._msg_layout.addWidget(label)
 
     def _find_user_name(self, user_id):
-        """根据用户ID查找名称"""
+        """根据用户ID查找显示名称（优先使用备注）"""
         if user_id == self.state.user_id:
             return self.state.username or "我"
+        # 1. 查好友列表中的备注
+        for f in (self.state.friends or []):
+            if f.get("user_id") == user_id:
+                return f.get("remark") or f.get("nickname") or f.get("username", f"用户{user_id}")
+        # 2. 查在线用户
         for u in self.state.online_users:
             if u.get("user_id") == user_id:
                 return u.get("nickname") or u.get("username", f"用户{user_id}")

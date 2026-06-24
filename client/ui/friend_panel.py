@@ -11,7 +11,8 @@ from PyQt5.QtWidgets import (
     QLineEdit, QScrollArea, QFrame, QWidget, QInputDialog,
     QMessageBox, QDialog,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
+import time
 from client.core.base_panel import BasePanel
 from client.ui.create_group_dialog import CreateGroupDialog
 from common.messages import MT
@@ -31,6 +32,7 @@ class FriendPanel(BasePanel):
         self._friends = []  # 好友列表缓存
         self._filter = "all"  # 当前筛选：all/online/offline
         self._pending_requests = []  # 待处理的好友申请
+        self._rejected_requests = []  # 被拒绝的好友申请
         super().__init__(parent, app)
 
     def subscribe(self):
@@ -39,10 +41,17 @@ class FriendPanel(BasePanel):
         self.net.on(MT.FRIEND_ADD_RESP, self._on_friend_add)
         self.net.on(MT.FRIEND_REQ_NOTIFY, self._on_friend_req_notify)
         self.net.on(MT.FRIEND_AGREE_RESP, self._on_friend_agree_resp)
+        self.net.on(MT.FRIEND_REJECTED, self._on_friend_rejected)
         self.net.on(MT.FRIEND_REQ_LIST_RESP, self._on_friend_req_list)
         self.net.on(MT.GROUP_CREATE_RESP, self._on_group_create_resp)
         self.net.on(MT.USER_LIST, self._on_user_list)
         self._build_ui()
+
+    def showEvent(self, event):
+        """面板显示时请求初始数据"""
+        super().showEvent(event)
+        if self.state.user_id is not None and not self._friends:
+            self.net.send({"type": MT.FRIEND_LIST})
 
     def _build_ui(self):
         """构建好友面板UI"""
@@ -228,7 +237,13 @@ class FriendPanel(BasePanel):
             for req in self._pending_requests:
                 self._add_request_card(req)
 
-        # 2. 按筛选条件过滤好友
+        # 2. 已拒绝的好友申请
+        if self._rejected_requests:
+            self._add_section_label("已拒绝的申请")
+            for req in self._rejected_requests:
+                self._add_rejected_card(req)
+
+        # 3. 按筛选条件过滤好友
         online_ids = {u["user_id"] for u in self.state.online_users}
         filtered = self._friends
         if self._filter == "online":
@@ -276,6 +291,37 @@ class FriendPanel(BasePanel):
         line.setFixedHeight(1)
         line.setStyleSheet("background-color: #E5EAF3;")
         layout.addWidget(line, 1)
+
+        self._friend_layout.addWidget(container)
+
+    def _add_rejected_card(self, req):
+        """添加已拒绝的申请卡片（只读展示）"""
+        container = QFrame()
+        container.setFixedHeight(76)
+        container.setStyleSheet("""
+            QFrame { background-color: #F1F5F9; border-radius: 18px; border: 1px solid #E2E8F0; }
+        """)
+
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(14)
+
+        name = req.get("nickname") or req.get("username", "未知")
+        avatar = self._create_avatar(48, name[0] if name else "?", "#94A3B8")
+        layout.addWidget(avatar)
+
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        name_label = QLabel(name)
+        name_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #64748B; background: transparent;")
+        text_col.addWidget(name_label)
+
+        reason = req.get("reject_reason", "")
+        hint_text = f"已拒绝 · {reason}" if reason else "已拒绝"
+        hint_label = QLabel(hint_text)
+        hint_label.setStyleSheet("font-size: 14px; color: #94A3B8; background: transparent;")
+        text_col.addWidget(hint_label)
+        layout.addLayout(text_col, 1)
 
         self._friend_layout.addWidget(container)
 
@@ -337,9 +383,7 @@ class FriendPanel(BasePanel):
             QPushButton:hover { background: #E2E8F0; color: #64748B; }
         """)
         reject_btn.clicked.connect(
-            lambda checked, fid=from_id: self.net.send(
-                {"type": MT.FRIEND_REJECT, "from_id": fid}
-            )
+            lambda checked, fid=from_id: self._on_reject_friend(fid)
         )
         layout.addWidget(reject_btn)
 
@@ -437,10 +481,16 @@ class FriendPanel(BasePanel):
     # ==================== 操作处理 ====================
 
     def _on_add_friend(self):
-        """添加好友对话框（按用户ID搜索）"""
-        uid, ok = QInputDialog.getText(self, "添加好友", "请输入对方用户ID：")
-        if ok and uid.strip():
-            self.net.send({"type": MT.FRIEND_ADD, "target_id": uid.strip()})
+        """添加好友对话框（输入对方ID + 申请附言）"""
+        dialog = _AddFriendDialog(self.state.username or "", self)
+        if dialog.exec_() == QDialog.Accepted:
+            result = dialog.get_result()
+            if result:
+                self.net.send({
+                    "type": MT.FRIEND_ADD,
+                    "target_id": result["target_id"],
+                    "message": result["message"],
+                })
 
     def _on_friend_add(self, msg):
         """添加好友结果"""
@@ -454,18 +504,47 @@ class FriendPanel(BasePanel):
         self.net.send({"type": MT.FRIEND_REQ_LIST})
 
     def _on_friend_agree_resp(self, msg):
-        """好友申请被同意"""
+        """好友申请被同意 — 自动发送问候消息"""
+        friend_id = msg.get("friend_id")
+
         if msg.get("accepted"):
+            # 申请方：对方同意了，立即发送申请附言
             QMessageBox.information(self, "成功", f"{msg.get('friend_name', '对方')} 已同意你的好友申请！")
-            self.net.send({"type": MT.FRIEND_LIST})
+            req_msg = msg.get("request_message", "").strip()
+            if req_msg:
+                encrypted = self.app.crypto.encrypt(req_msg)
+                self.net.send({
+                    "type": MT.CHAT, "to": friend_id,
+                    "content": encrypted, "ts": int(time.time()),
+                })
+        elif msg.get("ok") and friend_id:
+            # 同意方：延迟发送问候消息（让申请方的消息先到）
+            encrypted = self.app.crypto.encrypt("我们现在是好友啦")
+            QTimer.singleShot(500, lambda: self.net.send({
+                "type": MT.CHAT, "to": friend_id,
+                "content": encrypted, "ts": int(time.time()),
+            }))
+
+        self.net.send({"type": MT.FRIEND_LIST})
 
     def _on_friend_req_list(self, msg):
-        """收到待处理申请列表"""
-        self._pending_requests = msg.get("requests", [])
+        """收到申请列表（含待处理和已拒绝）"""
+        requests = msg.get("requests", [])
+        self._pending_requests = [r for r in requests if r.get("status") == 0]
+        self._rejected_requests = [r for r in requests if r.get("status") == 2]
         self._refresh_friend_list()
 
+    def _on_friend_rejected(self, msg):
+        """对方拒绝了你的好友申请"""
+        from_name = msg.get("from_name", "对方")
+        reason = msg.get("reason", "未说明理由")
+        QMessageBox.information(self, "好友申请被拒绝",
+                                f"{from_name} 拒绝了你的好友申请\n理由：{reason}")
+        # 刷新申请列表（服务端已记录拒绝）
+        self.net.send({"type": MT.FRIEND_REQ_LIST})
+
     def _on_create_group(self):
-        """发起群聊"""
+        """发起群聊（只有一人时自动进入私聊）"""
         if not self._friends:
             QMessageBox.information(self, "提示", "没有好友可邀请")
             return
@@ -474,18 +553,36 @@ class FriendPanel(BasePanel):
         if dialog.exec_() == QDialog.Accepted:
             result = dialog.get_result()
             if result:
+                invitees = result.get("invitees", [])
+
+                # 只选了一个人 → 自动进入私聊
+                if len(invitees) == 1:
+                    friend_id = invitees[0]
+                    friend_name = str(friend_id)
+                    for f in self._friends:
+                        if f["user_id"] == friend_id:
+                            friend_name = f.get("remark") or f.get("username", str(friend_id))
+                            break
+                    self._switch_to_chat(friend_id, friend_name)
+                    return
+
+                # 多人则正常创建群聊
                 self.net.send({"type": MT.GROUP_CREATE, **result})
 
     def _on_group_create_resp(self, msg):
-        """创建群聊结果"""
+        """创建群聊结果 — 成功后自动跳转到群聊窗口"""
         if msg.get("ok"):
-            QMessageBox.information(
-                self, "成功",
-                f"群聊「{msg.get('group_name', '')}」创建成功！\n群ID: {msg.get('group_id', '')}"
-            )
-            # 刷新好友列表页面
-            self.net.send({"type": MT.FRIEND_LIST})
+            # 切换到聊天面板并选中新群聊
+            self.app.main.switch_panel("chat")
+            chat_panel = self.app.panels.get("chat")
+            if chat_panel:
+                chat_panel._on_contact_selected(
+                    {"id": msg["group_id"], "name": msg["group_name"], "type": "room"}
+                )
+            # 刷新群聊列表使左侧显示新群
+            self.net.send({"type": MT.GROUP_LIST})
         else:
+            from PyQt5.QtWidgets import QMessageBox
             QMessageBox.warning(self, "失败", msg.get("message", "创建群聊失败"))
 
     def _on_remark(self, friend_id, current_name):
@@ -493,6 +590,16 @@ class FriendPanel(BasePanel):
         remark, ok = QInputDialog.getText(self, "设置备注", f"为 {current_name} 设置备注：")
         if ok:
             self.net.send({"type": MT.FRIEND_REMARK, "friend_id": friend_id, "remark": remark.strip()})
+
+    def _on_reject_friend(self, from_id):
+        """拒绝好友申请，弹出对话框输入理由"""
+        reason, ok = QInputDialog.getText(self, "拒绝好友申请", "请输入拒绝理由（可选）：")
+        if ok:
+            self.net.send({
+                "type": MT.FRIEND_REJECT,
+                "from_id": from_id,
+                "reason": reason.strip(),
+            })
 
     def _switch_to_chat(self, friend_id, friend_name):
         """切换到与该好友的聊天"""
@@ -517,3 +624,112 @@ class FriendPanel(BasePanel):
         """在线列表更新时刷新"""
         self.state.online_users = msg.get("online_users", [])
         self._refresh_friend_list()
+
+
+class _AddFriendDialog(QDialog):
+    """添加好友对话框（输入对方ID + 申请附言）"""
+
+    def __init__(self, my_username, parent=None):
+        super().__init__(parent)
+        self._result = None
+        self.setWindowTitle("添加好友")
+        self.setFixedSize(400, 280)
+        self.setStyleSheet("""
+            QDialog { background-color: #F7F9FD; border-radius: 16px; }
+        """)
+        self._build_ui(my_username)
+
+    def get_result(self):
+        return self._result
+
+    def _build_ui(self, my_username):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        title = QLabel("添加好友")
+        title.setStyleSheet("font-size: 24px; font-weight: 800; color: #1E293B;")
+        layout.addWidget(title)
+
+        # 对方ID
+        id_label = QLabel("对方用户 ID")
+        id_label.setStyleSheet("font-size: 15px; font-weight: 700; color: #475569;")
+        layout.addWidget(id_label)
+
+        self._id_input = QLineEdit()
+        self._id_input.setPlaceholderText("请输入对方用户ID")
+        self._id_input.setFixedHeight(48)
+        self._id_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #fff; border: 2px solid #E5EAF3;
+                border-radius: 12px; font-size: 16px; color: #1E293B;
+                padding: 0 16px;
+            }
+            QLineEdit:focus { border: 2px solid #4F8DFD; }
+            QLineEdit::placeholder { color: #B0BAC8; }
+        """)
+        layout.addWidget(self._id_input)
+
+        # 申请消息
+        msg_label = QLabel("申请附言")
+        msg_label.setStyleSheet("font-size: 15px; font-weight: 700; color: #475569;")
+        layout.addWidget(msg_label)
+
+        self._msg_input = QLineEdit()
+        self._msg_input.setPlaceholderText("我是" + (my_username or "XXX"))
+        self._msg_input.setText(f"我是{my_username}")
+        self._msg_input.selectAll()
+        self._msg_input.setFixedHeight(48)
+        self._msg_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #fff; border: 2px solid #E5EAF3;
+                border-radius: 12px; font-size: 16px; color: #1E293B;
+                padding: 0 16px;
+            }
+            QLineEdit:focus { border: 2px solid #4F8DFD; }
+            QLineEdit::placeholder { color: #B0BAC8; }
+        """)
+        layout.addWidget(self._msg_input)
+
+        # 按钮
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setFixedHeight(48)
+        cancel_btn.setCursor(Qt.PointingHandCursor)
+        cancel_btn.setStyleSheet("""
+            QPushButton {
+                background: #fff; color: #94A3B8; border: 1px solid #E5EAF3;
+                border-radius: 14px; font-size: 16px; font-weight: 700;
+            }
+            QPushButton:hover { background: #F7F9FD; color: #64748B; }
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        btn_row.addWidget(cancel_btn)
+
+        send_btn = QPushButton("发送申请")
+        send_btn.setFixedHeight(48)
+        send_btn.setCursor(Qt.PointingHandCursor)
+        send_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #4F8DFD, stop:1 #2D6CF6);
+                color: white; border: none; border-radius: 14px;
+                font-size: 16px; font-weight: 700;
+            }
+            QPushButton:hover { background: #1D5CE6; }
+        """)
+        send_btn.clicked.connect(self._on_send)
+        btn_row.addWidget(send_btn)
+
+        layout.addLayout(btn_row)
+
+    def _on_send(self):
+        target_id = self._id_input.text().strip()
+        if not target_id:
+            QMessageBox.warning(self, "提示", "请输入对方用户ID")
+            return
+        message = self._msg_input.text().strip()
+        self._result = {"target_id": target_id, "message": message}
+        self.accept()

@@ -207,13 +207,20 @@ class CreateGroupDialog(QDialog):
             self._selected_ids.discard(user_id)
 
     def _on_create(self):
-        """点击创建按钮"""
+        """点击创建按钮（名称为空时自动拼接所有成员昵称）"""
         group_name = self._name_input.text().strip()
         if not group_name:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "提示", "请输入群聊名称")
-            self._name_input.setFocus()
-            return
+            # 自动生成群名：所选好友的昵称拼接
+            names = []
+            for f in self._friends:
+                if f["user_id"] in self._selected_ids:
+                    names.append(f.get("remark") or f.get("username", "未知"))
+            if names:
+                group_name = "、".join(names)
+            else:
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "提示", "请至少选择一位好友")
+                return
 
         self._group_name = group_name
         self.accept()

@@ -24,6 +24,7 @@ class MT:
     FRIEND_AGREE = "friend_agree"
     FRIEND_AGREE_RESP = "friend_agree_resp"
     FRIEND_REJECT = "friend_reject"
+    FRIEND_REJECTED = "friend_rejected"  # 通知申请方被拒绝
     FRIEND_REQ_LIST = "friend_req_list"
     FRIEND_REQ_LIST_RESP = "friend_req_list_resp"
 

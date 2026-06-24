@@ -99,6 +99,7 @@ def _handle_join(session, msg):
         return
 
     ctx.db.groups.add_member(group_id, user_id)
+
     session.send({
         "type": MT.GROUP_JOIN_RESP,
         "ok": True,

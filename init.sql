@@ -5,6 +5,7 @@
 DROP DATABASE IF EXISTS campus_im;
 CREATE DATABASE campus_im DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE campus_im;
+SET NAMES utf8mb4;
 
 -- 创建用户表
 CREATE TABLE user (
@@ -24,7 +25,7 @@ CREATE TABLE message (
     msg_type TINYINT NOT NULL COMMENT '1=私聊, 2=群聊',
     sender_id INT NOT NULL,
     receiver_id INT COMMENT '私聊时有值',
-    room_id INT COMMENT '群聊时有值',
+    room_id VARCHAR(32) COMMENT '群聊时有值',
     content TEXT NOT NULL COMMENT '存储明文',
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_p2p (sender_id, receiver_id, sent_at),
@@ -60,7 +61,9 @@ CREATE TABLE friend_request (
     id INT PRIMARY KEY AUTO_INCREMENT,
     from_id INT NOT NULL,
     to_id INT NOT NULL,
+    message VARCHAR(200) DEFAULT '' COMMENT '申请附言',
     status TINYINT DEFAULT 0 COMMENT '0=待处理 1=已同意 2=已拒绝',
+    reject_reason VARCHAR(200) DEFAULT '' COMMENT '拒绝理由',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_to (to_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

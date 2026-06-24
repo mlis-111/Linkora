@@ -169,7 +169,7 @@ class FriendDAO(BaseDAO):
             (user_id,)
         )
 
-
+# /////////////////////////////////////////////////////////////////////////////////////////
 class GroupDAO(BaseDAO):
     """群聊数据访问对象"""
 
@@ -259,7 +259,8 @@ class GroupDAO(BaseDAO):
             list: 群聊信息列表（含未读数占位）
         """
         return self._query(
-            "SELECT g.group_id, g.group_name, g.owner_id, gm.joined_at "
+            "SELECT g.group_id, g.group_name, g.owner_id, "
+            "CAST(gm.joined_at AS CHAR) AS joined_at "
             "FROM chat_group g JOIN group_member gm ON g.group_id=gm.group_id "
             "WHERE gm.user_id=%s ORDER BY gm.joined_at DESC",
             (user_id,)
@@ -354,19 +355,20 @@ class FileDAO(BaseDAO):
 class FriendRequestDAO(BaseDAO):
     """好友申请数据访问对象"""
 
-    def create(self, from_id, to_id):
+    def create(self, from_id, to_id, message=""):
         """创建好友申请
 
         Args:
             from_id: 申请人ID
             to_id: 接收人ID
+            message: 申请附言
 
         Returns:
             int: 申请记录ID
         """
         return self._execute(
-            "INSERT INTO friend_request(from_id,to_id,status) VALUES(%s,%s,0)",
-            (from_id, to_id)
+            "INSERT INTO friend_request(from_id,to_id,message,status) VALUES(%s,%s,%s,0)",
+            (from_id, to_id, message)
         )
 
     def find_pending(self, from_id, to_id):
@@ -392,15 +394,16 @@ class FriendRequestDAO(BaseDAO):
         )
 
     def list_incoming(self, user_id):
-        """查询收到的待处理申请（含申请人名称）
+        """查询收到的申请（待处理 + 已拒绝，含申请人名称）
 
         Returns:
-            list: 申请列表
+            list: 申请列表（含 status 和 reject_reason）
         """
         return self._query(
-            "SELECT r.id, r.from_id, u.username, u.nickname "
+            "SELECT r.id, r.from_id, r.message, r.status, r.reject_reason, "
+            "u.username, u.nickname "
             "FROM friend_request r JOIN user u ON u.user_id=r.from_id "
-            "WHERE r.to_id=%s AND r.status=0 ORDER BY r.created_at DESC",
+            "WHERE r.to_id=%s AND r.status IN (0, 2) ORDER BY r.created_at DESC",
             (user_id,)
         )
 
@@ -414,4 +417,16 @@ class FriendRequestDAO(BaseDAO):
         self._execute(
             "UPDATE friend_request SET status=%s WHERE id=%s",
             (status, req_id)
+        )
+
+    def reject(self, req_id, reason=""):
+        """拒绝申请，记录理由
+
+        Args:
+            req_id: 申请记录ID
+            reason: 拒绝理由
+        """
+        self._execute(
+            "UPDATE friend_request SET status=2, reject_reason=%s WHERE id=%s",
+            (reason, req_id)
         )
