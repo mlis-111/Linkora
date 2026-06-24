@@ -555,12 +555,117 @@ class AIPanel(BasePanel):
 
         self._is_waiting = True
         self._send_btn.setEnabled(False)
-        self._waiting = self._waiting_indicator()
+
+        # 等待指示器
+        self._waiting = QLabel("✨ AI 正在思考…")
+        self._waiting.setContentsMargins(0, 8, 0, 8)
+        self._waiting.setStyleSheet(
+            f"font-size:13px; color:{C_SUBTLE}; background:transparent;")
         self._add_to_chat(self._waiting)
+
+        # 流式状态
+        self._stream_full = ""
+        self._stream_container = None
+        self._stream_bubble = None
 
         self.net.send({"type": MT.AI_ASK, "question": text, "ts": ts})
 
     def _on_ai_answer(self, msg):
+        is_chunk = msg.get("chunk", False)
+        is_done = msg.get("done", False)
+
+        # ── 流式块 ──
+        if is_chunk:
+            delta = msg.get("answer", "")
+            if not delta:
+                return
+
+            # 第一个块：移除等待指示器，创建 AI 气泡容器
+            if self._stream_container is None:
+                if hasattr(self, '_waiting') and self._waiting:
+                    self._waiting.hide()
+                    self._waiting.deleteLater()
+                    self._waiting = None
+
+                # 创建流式气泡容器
+                w = QWidget()
+                lo = QHBoxLayout(w)
+                lo.setContentsMargins(0, 0, 0, 0)
+                lo.setSpacing(13)
+
+                av = QLabel("✨")
+                av.setFixedSize(42, 42)
+                av.setAlignment(Qt.AlignCenter)
+                av.setStyleSheet(f"""
+                    background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
+                        stop:0 {C_AI_START}, stop:1 {C_AI_END});
+                    color:white; border-radius:21px; font-size:20px;
+                """)
+                lo.addWidget(av)
+
+                tw = QWidget()
+                tl = QVBoxLayout(tw)
+                tl.setContentsMargins(0, 0, 0, 0)
+                tl.setSpacing(6)
+
+                info = QLabel("AI 助手")
+                info.setStyleSheet(f"font-size:12px; color:{C_SUBTLE};")
+                tl.addWidget(info)
+
+                bf = QFrame()
+                bf.setStyleSheet(f"""
+                    QFrame {{
+                        background:{C_WHITE}; border:1px solid #E7EFFC;
+                        border-top-left-radius:5px; border-top-right-radius:18px;
+                        border-bottom-right-radius:18px; border-bottom-left-radius:18px;
+                    }}
+                """)
+                bl = QVBoxLayout(bf)
+                bl.setContentsMargins(16, 14, 16, 14)
+                bt = QLabel("")
+                bt.setWordWrap(True)
+                bt.setMaximumWidth(520)
+                bt.setTextFormat(Qt.PlainText)
+                bt.setStyleSheet(
+                    f"color:{C_DARK}; font-size:15px; background:transparent; border:none;")
+                bt.setContentsMargins(0, 0, 0, 0)
+                bl.addWidget(bt)
+                tl.addWidget(bf)
+
+                lo.addWidget(tw)
+                lo.addStretch()
+
+                self._stream_container = w
+                self._stream_bubble = bt
+
+                # 移除 stretch，插入流式容器
+                if self._msg_layout.count() > 0:
+                    last = self._msg_layout.itemAt(self._msg_layout.count() - 1)
+                    if last.spacerItem():
+                        self._msg_layout.removeItem(last)
+                self._msg_layout.addWidget(w)
+                self._msg_layout.addStretch()
+
+            # 追加文本
+            self._stream_full += delta
+            self._stream_bubble.setText(self._stream_full)
+            self._scroll_to_bottom()
+            return
+
+        # ── 流结束 ──
+        if is_done:
+            self._is_waiting = False
+            self._send_btn.setEnabled(True)
+
+            ts_str = datetime.now().strftime("%H:%M")
+            self._messages.append(
+                {"role": "ai", "content": self._stream_full, "ts": ts_str})
+
+            self._stream_container = None
+            self._stream_bubble = None
+            return
+
+        # ── 非流式（兼容旧版） ──
         self._is_waiting = False
         self._send_btn.setEnabled(True)
 
@@ -584,7 +689,6 @@ class AIPanel(BasePanel):
         cl.setContentsMargins(0, 0, 0, 0)
         cl.setSpacing(10)
 
-        # 头像行
         hr = QHBoxLayout()
         hr.setSpacing(13)
         av = QLabel("✨")

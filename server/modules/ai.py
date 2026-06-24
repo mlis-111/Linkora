@@ -107,7 +107,8 @@ def _do_ask(session, msg):
     # 追加当前问题
     messages.append({"role": "user", "content": question})
 
-    # 3) 调用 DeepSeek API（OpenAI 兼容）
+    # 3) 调用 DeepSeek API（流式输出）
+    full_answer = ""
     try:
         resp = requests.post(
             ctx.config.AI_API_URL,
@@ -118,11 +119,46 @@ def _do_ask(session, msg):
             json={
                 "model": ctx.config.AI_MODEL,
                 "messages": messages,
+                "stream": True,
             },
-            timeout=60,
+            stream=True,
+            timeout=120,
         )
         resp.raise_for_status()
-        answer = resp.json()["choices"][0]["message"]["content"]
+
+        # 逐行读取 SSE 流
+        for line in resp.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str.strip() == "[DONE]":
+                break
+            try:
+                import json as _json
+                chunk = _json.loads(data_str)
+                delta = chunk["choices"][0]["delta"].get("content", "")
+            except Exception:
+                continue
+
+            if delta:
+                full_answer += delta
+                # 逐块推送给客户端
+                session.send({
+                    "type": MT.AI_ANSWER,
+                    "answer": delta,
+                    "chunk": True,
+                    "ts": int(time.time()),
+                })
+
+        # 发送流结束标记
+        session.send({
+            "type": MT.AI_ANSWER,
+            "answer": "",
+            "chunk": False,
+            "done": True,
+            "ts": int(time.time()),
+        })
+
     except Exception as e:
         logging.exception("AI模块：API 调用失败")
         session.send({
@@ -132,15 +168,9 @@ def _do_ask(session, msg):
         })
         return
 
-    # 4) 入库回答
-    try:
-        ctx.db.messages.insert(1, ai_user_id, user_id, None, answer)
-    except Exception:
-        logging.exception("AI模块：回答入库失败")
-
-    # 5) 回传答案（字段严格按契约：answer, ts）
-    session.send({
-        "type": MT.AI_ANSWER,
-        "answer": answer,
-        "ts": int(time.time()),
-    })
+    # 4) 入库完整回答
+    if full_answer:
+        try:
+            ctx.db.messages.insert(1, ai_user_id, user_id, None, full_answer)
+        except Exception:
+            logging.exception("AI模块：回答入库失败")

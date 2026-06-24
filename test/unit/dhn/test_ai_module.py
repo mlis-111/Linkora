@@ -125,6 +125,21 @@ class TestHandleAiAsk:
         assert call_args[1] == mock_session
 
 
+# ── 辅助：构建流式 API mock ──
+
+def _make_stream_mock(chunks, raise_for_status=True):
+    """构造模拟 DeepSeek 流式响应的 Mock"""
+    lines = [f'data: {{"choices":[{{"delta":{{"content":"{c}"}}}}]}}' for c in chunks]
+    lines.append("data: [DONE]")
+    mock_resp = Mock()
+    mock_resp.iter_lines.return_value = lines
+    if raise_for_status is True:
+        mock_resp.raise_for_status.return_value = None
+    else:
+        mock_resp.raise_for_status = raise_for_status
+    return mock_resp
+
+
 # ==================== 语句覆盖 & 判定覆盖：_do_ask 正常流程 ====================
 
 class TestDoAskNormalFlow:
@@ -135,11 +150,7 @@ class TestDoAskNormalFlow:
         """语句覆盖：应该将用户提问入库（sender=用户, receiver=AI_USER_ID）"""
         from server.modules.ai import _do_ask
 
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "推荐使用 AES-256-CBC 模式"}}]
-        }
-        mock_post.return_value = mock_response
+        mock_post.return_value = _make_stream_mock(["推荐使用", " AES-256-CBC 模式"])
 
         msg = {"question": "AES 怎么实现？", "ts": int(time.time())}
         _do_ask(mock_session, msg)
@@ -151,14 +162,10 @@ class TestDoAskNormalFlow:
 
     @patch("server.modules.ai.requests.post")
     def test_inserts_answer_to_db(self, mock_post, mock_session):
-        """判定覆盖：应该将 AI 回答入库（sender=AI_USER_ID, receiver=用户）——插入方向反转"""
+        """判定覆盖：应该将完整 AI 回答入库（sender=AI_USER_ID, receiver=用户）"""
         from server.modules.ai import _do_ask
 
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "推荐使用 AES-256-CBC 模式"}}]
-        }
-        mock_post.return_value = mock_response
+        mock_post.return_value = _make_stream_mock(["推荐使用", " AES-256-CBC 模式"])
 
         msg = {"question": "AES 怎么实现？", "ts": int(time.time())}
         _do_ask(mock_session, msg)
@@ -169,35 +176,32 @@ class TestDoAskNormalFlow:
         )
 
     @patch("server.modules.ai.requests.post")
-    def test_sends_ai_answer_to_client(self, mock_post, mock_session):
-        """语句覆盖：应该向客户端发送正确格式的 ai_answer 消息"""
+    def test_sends_streaming_chunks(self, mock_post, mock_session):
+        """语句覆盖：应该逐块发送 chunk:True 的 ai_answer 和最终的 done:True"""
         from server.modules.ai import _do_ask
 
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "推荐使用 AES-256-CBC 模式"}}]
-        }
-        mock_post.return_value = mock_response
+        mock_post.return_value = _make_stream_mock(["hello", " world"])
 
-        msg = {"question": "AES 怎么实现？", "ts": int(time.time())}
+        msg = {"question": "测试", "ts": int(time.time())}
         _do_ask(mock_session, msg)
 
-        assert mock_session.send.called
-        call_args = mock_session.send.call_args[0][0]
-        assert call_args["type"] == MT.AI_ANSWER
-        assert call_args["answer"] == "推荐使用 AES-256-CBC 模式"
-        assert "ts" in call_args
+        # 至少发送了 chunk + done 消息
+        calls = mock_session.send.call_args_list
+        types = [c[0][0].get("type") for c in calls]
+        assert MT.AI_ANSWER in types
+        # 有 chunk 消息
+        chunks = [c[0][0] for c in calls if c[0][0].get("chunk")]
+        assert len(chunks) >= 1
+        # 有 done 消息
+        done = [c[0][0] for c in calls if c[0][0].get("done")]
+        assert len(done) == 1
 
     @patch("server.modules.ai.requests.post")
     def test_calls_deepseek_api_correctly(self, mock_post, mock_session):
-        """判定覆盖：验证 API 调用参数正确（URL, headers, body, model）"""
+        """判定覆盖：验证 API 调用参数正确（URL, headers, body, model, stream）"""
         from server.modules.ai import _do_ask
 
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "好的"}}]
-        }
-        mock_post.return_value = mock_response
+        mock_post.return_value = _make_stream_mock(["好的"])
 
         msg = {"question": "什么是 TCP？", "ts": int(time.time())}
         _do_ask(mock_session, msg)
@@ -208,6 +212,7 @@ class TestDoAskNormalFlow:
         assert call_args[0][0] == "https://api.deepseek.com/v1/chat/completions"
         assert call_args[1]["headers"]["Authorization"] == "Bearer test-key"
         assert call_args[1]["json"]["model"] == "deepseek-chat"
+        assert call_args[1]["json"]["stream"] is True
         messages = call_args[1]["json"]["messages"]
         assert messages[0]["role"] == "system"
         assert "校园通" in messages[0]["content"]
@@ -229,10 +234,7 @@ class TestDoAskMultiTurn:
         ]
 
         mock_response = Mock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "好的，基于之前的讨论..."}}]
-        }
-        mock_post.return_value = mock_response
+        mock_post.return_value = _make_stream_mock(["好的，基于之前的讨论..."])
 
         msg = {"question": "能详细说说吗？", "ts": int(time.time())}
         _do_ask(mock_session, msg)
@@ -249,11 +251,7 @@ class TestDoAskMultiTurn:
             {"sender_id": 1, "content": "上次的回答"},
         ]
 
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "继续..."}}]
-        }
-        mock_post.return_value = mock_response
+        mock_post.return_value = _make_stream_mock(["继续..."])
 
         msg = {"question": "追问", "ts": int(time.time())}
         _do_ask(mock_session, msg)
@@ -274,11 +272,7 @@ class TestDoAskMultiTurn:
 
         mock_session.ctx.db.messages.query_p2p.return_value = []
 
-        mock_response = Mock()
-        mock_response.json.return_value = {
-            "choices": [{"message": {"content": "没有历史"}}]
-        }
-        mock_post.return_value = mock_response
+        mock_post.return_value = _make_stream_mock(["没有历史"])
 
         msg = {"question": "新问题", "ts": int(time.time())}
         _do_ask(mock_session, msg)
