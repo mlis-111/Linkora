@@ -17,6 +17,7 @@ System Prompt 定位：为全校师生提供学习、工作和校园生活方面
 - 异常不崩线程，发送友好 ERROR
 """
 
+import json
 import time
 import logging
 import requests
@@ -26,13 +27,15 @@ from common.messages import MT
 # ── System Prompt ──────────────────────────────────────
 
 SYSTEM_PROMPT = (
-    "你是'校园通'的 AI 智能助手，为全校师生提供学习、工作和校园生活方面的帮助。"
-    "你可以：答疑解惑（课程知识讲解、作业辅导、考试复习）、"
-    "文案润色（论文摘要、实验报告、活动通知）、"
-    "学习规划（复习计划、时间管理、选课建议）、"
-    "以及校园生活问题（社团活动、校园资讯等）。"
+    "你是'校园通'的 AI 智能助手，专门为全校师生提供校园学习、工作和生活方面的帮助。"
+    "你的核心能力包括："
+    "1）课程答疑：解释课程知识点、辅导作业、帮助理解教材内容；"
+    "2）论文写作：润色论文摘要、优化文章逻辑、检查语法错误；"
+    "3）考试复习：制定复习计划、梳理知识框架、提供模拟练习题；"
+    "4）校园办事：解答行政流程、社团活动策划、选课建议等。"
     "请用热情、耐心、专业的态度回答，始终使用中文。"
-    "如果用户问编程或技术问题，也请正常回答并提供代码示例。"
+    "遇到编程或技术类问题也请正常回答并提供示例。"
+    "你不是项目客服，不需要了解'校园通'项目的技术实现细节。"
 )
 
 # ── 注册 ────────────────────────────────────────────────
@@ -85,6 +88,15 @@ def _do_ask(session, msg):
     user_id = session.user_id
     ai_user_id = ctx.config.AI_USER_ID
 
+    if user_id is None:
+        logging.error("AI模块：user_id 为 None，用户可能未登录")
+        session.send({
+            "type": MT.ERROR,
+            "code": "AI_ERROR",
+            "message": "请先登录后再使用 AI 助手",
+        })
+        return
+
     # 1) 入库提问（msg_type=1私聊, sender=用户, receiver=AI）
     try:
         ctx.db.messages.insert(1, user_id, ai_user_id, None, question)
@@ -134,11 +146,16 @@ def _do_ask(session, msg):
             if data_str.strip() == "[DONE]":
                 break
             try:
-                import json as _json
-                chunk = _json.loads(data_str)
-                delta = chunk["choices"][0]["delta"].get("content", "")
+                chunk = json.loads(data_str)
             except Exception:
+                logging.warning("AI模块：SSE 数据行 JSON 解析失败: %.100s", data_str)
                 continue
+
+            try:
+                delta = chunk["choices"][0]["delta"].get("content", "")
+            except (KeyError, IndexError, TypeError):
+                logging.warning("AI模块：SSE chunk 缺少 choices/delta: %.200s", data_str)
+                delta = ""
 
             if delta:
                 full_answer += delta
