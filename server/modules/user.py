@@ -145,10 +145,11 @@ def handle_login(session, msg):
         "all_users": all_users  # 添加所有用户列表
     })
 
-    # 广播用户上线
+    # 广播用户上线（附带完整用户列表，让客户端更新好友列表）
     ctx.online.broadcast({
         "type": MT.USER_LIST,
-        "online_users": snap
+        "online_users": snap,
+        "all_users": all_users
     })
 
 
@@ -217,11 +218,13 @@ def handle_logout(session, msg):
     # 从在线表移除
     ctx.online.remove(uid)
 
-    # 广播用户下线
+    # 广播用户下线（附带完整用户列表，让客户端更新好友列表）
     snap = _snapshot(ctx)
+    all_users = _all_users_snapshot(ctx)
     ctx.online.broadcast({
         "type": MT.USER_LIST,
-        "online_users": snap
+        "online_users": snap,
+        "all_users": all_users
     })
 
     # 关闭连接（会触发 ClientHandler._cleanup，但 uid 已移除所以不会重复广播）
@@ -240,9 +243,11 @@ def on_disconnect(session):
     if session.user_id is None:
         return
 
-    # 广播用户下线
+    # 广播用户下线（附带完整用户列表）
     snap = _snapshot(session.ctx)
+    all_users = _all_users_snapshot(session.ctx)
     session.ctx.online.broadcast({
         "type": MT.USER_LIST,
-        "online_users": snap
+        "online_users": snap,
+        "all_users": all_users
     })

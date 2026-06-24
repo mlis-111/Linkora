@@ -13,8 +13,10 @@ class FriendPanel(BasePanel):
         self.app.net.on(MT.USER_LIST, self._on_user_list_update)
 
     def _on_user_list_update(self, msg):
-        """处理用户列表更新"""
+        """处理用户列表更新（同步更新 all_users 确保新用户可见）"""
         self.app.state.online_users = msg.get("online_users", [])
+        if msg.get("all_users"):
+            self.app.state.all_users = msg["all_users"]
         self._refresh_user_list()
 
     def _build_ui(self):
