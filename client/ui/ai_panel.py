@@ -1134,24 +1134,83 @@ class AIPanel(BasePanel):
         return parts
 
     def _md2html(self, text):
-        text = text.replace("&", "&amp;").replace(
-            "<", "&lt;").replace(">", "&gt;")
-        # 标题
-        text = re.sub(r"(?m)^### (.+)$", r"<h3>\1</h3>", text)
-        text = re.sub(r"(?m)^## (.+)$", r"<h2>\1</h2>", text)
-        # 粗体 / 斜体
+        """Markdown → HTML，支持标题/列表/引用/粗斜体/代码/链接/分割线"""
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        lines = text.split("\n")
+        out = []
+        in_ul, in_ol, in_quote = False, False, False
+
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+
+            # 空行 → 结束列表/引用
+            if not line.strip():
+                if in_ul: out.append("</ul>"); in_ul = False
+                if in_ol: out.append("</ol>"); in_ol = False
+                if in_quote: out.append("</blockquote>"); in_quote = False
+                out.append("<br>"); i += 1; continue
+
+            # 引用
+            if line.lstrip().startswith("> "):
+                if not in_quote:
+                    out.append('<blockquote style="border-left:3px solid #7C5CFC; '
+                               'margin:8px 0; padding:4px 12px; color:#555;">')
+                    in_quote = True
+                out.append(f"<p>{self._inline_md(line.lstrip()[2:])}</p>")
+                i += 1; continue
+            elif in_quote:
+                out.append("</blockquote>"); in_quote = False
+
+            # 标题
+            if line.startswith("### "): out.append(f"<h3>{self._inline_md(line[4:])}</h3>"); i += 1; continue
+            if line.startswith("## "):  out.append(f"<h2>{self._inline_md(line[3:])}</h2>"); i += 1; continue
+            if line.startswith("# "):   out.append(f"<h1>{self._inline_md(line[2:])}</h1>"); i += 1; continue
+
+            # 分割线
+            if line.strip() in ("---", "***"):
+                out.append("<hr style='border:none;height:1px;background:#E5E5E5;margin:12px 0;'>")
+                i += 1; continue
+
+            # 有序列表
+            m = re.match(r"^(\d+)\.\s+(.+)", line)
+            if m:
+                if in_ul: out.append("</ul>"); in_ul = False
+                if not in_ol: out.append("<ol style='margin:4px 0;padding-left:24px;'>"); in_ol = True
+                out.append(f"<li>{self._inline_md(m.group(2))}</li>")
+                i += 1; continue
+
+            # 无序列表
+            m = re.match(r"^[-*]\s+(.+)", line)
+            if m:
+                if in_ol: out.append("</ol>"); in_ol = False
+                if not in_ul: out.append("<ul style='margin:4px 0;padding-left:24px;'>"); in_ul = True
+                out.append(f"<li>{self._inline_md(m.group(1))}</li>")
+                i += 1; continue
+
+            # 结束列表
+            if in_ul: out.append("</ul>"); in_ul = False
+            if in_ol: out.append("</ol>"); in_ol = False
+
+            # 普通段落
+            out.append(f"<p>{self._inline_md(line)}</p>")
+            i += 1
+
+        if in_ul: out.append("</ul>")
+        if in_ol: out.append("</ol>")
+        if in_quote: out.append("</blockquote>")
+        return "".join(out)
+
+    def _inline_md(self, text):
+        """行内：粗体、斜体、代码、链接"""
         text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
         text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
-        # 行内代码
         text = re.sub(
             r"`([^`]+)`",
-            r'<code style="background:#F1F5F9; padding:1px 8px; '
-            r'border-radius:5px; font-size:22px; color:#5B21B6;">\1</code>',
-            text)
-        # 无序列表
-        text = re.sub(r"(?m)^- (.+)$", r"<li>\1</li>", text)
-        text = re.sub(r"(?m)^\d+\. (.+)$", r"<li>\1</li>", text)
-        text = text.replace("\n", "<br>")
+            r'<code style="background:#F1F5F9;padding:2px 8px;'
+            r'border-radius:4px;font-size:22px;color:#5B21B6;">\1</code>', text)
+        text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)",
+                      r'<a href="\2" style="color:#7C5CFC;">\1</a>', text)
         return text
 
     # ═══════════════════════════════════════════════════
