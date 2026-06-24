@@ -55,6 +55,35 @@ CREATE TABLE file_record (
     INDEX idx_receiver (receiver_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 创建好友申请表
+CREATE TABLE friend_request (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    from_id INT NOT NULL,
+    to_id INT NOT NULL,
+    status TINYINT DEFAULT 0 COMMENT '0=待处理 1=已同意 2=已拒绝',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_to (to_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建群聊表
+CREATE TABLE chat_group (
+    group_id VARCHAR(32) PRIMARY KEY,
+    group_name VARCHAR(100) NOT NULL,
+    owner_id INT COMMENT '群主，公共群为 NULL',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建群成员表
+CREATE TABLE group_member (
+    group_id VARCHAR(32) NOT NULL,
+    user_id INT NOT NULL,
+    joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (group_id, user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 插入默认公共群聊
+INSERT INTO chat_group (group_id, group_name, owner_id) VALUES ('group_public', '公共聊天室', NULL);
+
 -- 插入预置数据
 -- AI账号 (user_id=1, password: ai123456)
 INSERT INTO user (username, password_hash, salt, nickname, is_ai_bot) VALUES

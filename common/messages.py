@@ -20,6 +20,12 @@ class MT:
     FRIEND_REMARK = "friend_remark"
     FRIEND_LIST = "friend_list"
     FRIEND_LIST_RESP = "friend_list_resp"
+    FRIEND_REQ_NOTIFY = "friend_req_notify"
+    FRIEND_AGREE = "friend_agree"
+    FRIEND_AGREE_RESP = "friend_agree_resp"
+    FRIEND_REJECT = "friend_reject"
+    FRIEND_REQ_LIST = "friend_req_list"
+    FRIEND_REQ_LIST_RESP = "friend_req_list_resp"
 
     # 文件传输
     FILE_REQ = "file_req"
@@ -31,11 +37,22 @@ class MT:
     AI_ASK = "ai_ask"
     AI_ANSWER = "ai_answer"
 
+    # 群聊管理
+    GROUP_CREATE = "group_create"
+    GROUP_CREATE_RESP = "group_create_resp"
+    GROUP_JOIN = "group_join"
+    GROUP_JOIN_RESP = "group_join_resp"
+    GROUP_LIST = "group_list"
+    GROUP_LIST_RESP = "group_list_resp"
+    GROUP_MEMBERS = "group_members"
+    GROUP_MEMBERS_RESP = "group_members_resp"
+    GROUP_INVITE = "group_invite"
+
     # 错误
     ERROR = "error"
 
 
-PUBLIC_ROOM_ID = 1
+PUBLIC_ROOM_ID = "group_public"
 
 
 def error(code, message):

@@ -170,6 +170,150 @@ class FriendDAO(BaseDAO):
         )
 
 
+class GroupDAO(BaseDAO):
+    """群聊数据访问对象"""
+
+    def create(self, group_id, group_name, owner_id):
+        """创建群聊
+
+        Args:
+            group_id: 群聊ID
+            group_name: 群聊名称
+            owner_id: 创建者ID
+
+        Returns:
+            int: 影响行数
+        """
+        return self._execute(
+            "INSERT INTO chat_group(group_id,group_name,owner_id) VALUES(%s,%s,%s)",
+            (group_id, group_name, owner_id)
+        )
+
+    def get_by_id(self, group_id):
+        """根据群聊ID查询群聊信息
+
+        Args:
+            group_id: 群聊ID
+
+        Returns:
+            dict or None: 群聊信息
+        """
+        return self._query_one(
+            "SELECT * FROM chat_group WHERE group_id=%s",
+            (group_id,)
+        )
+
+    def add_member(self, group_id, user_id):
+        """添加群成员
+
+        Args:
+            group_id: 群聊ID
+            user_id: 用户ID
+
+        Returns:
+            int: 影响行数
+        """
+        return self._execute(
+            "INSERT IGNORE INTO group_member(group_id,user_id) VALUES(%s,%s)",
+            (group_id, user_id)
+        )
+
+    def remove_member(self, group_id, user_id):
+        """移除群成员
+
+        Args:
+            group_id: 群聊ID
+            user_id: 用户ID
+
+        Returns:
+            int: 影响行数
+        """
+        return self._execute(
+            "DELETE FROM group_member WHERE group_id=%s AND user_id=%s",
+            (group_id, user_id)
+        )
+
+    def is_member(self, group_id, user_id):
+        """判断用户是否为群成员
+
+        Args:
+            group_id: 群聊ID
+            user_id: 用户ID
+
+        Returns:
+            bool: 是否为成员
+        """
+        row = self._query_one(
+            "SELECT 1 FROM group_member WHERE group_id=%s AND user_id=%s",
+            (group_id, user_id)
+        )
+        return row is not None
+
+    def list_by_user(self, user_id):
+        """查询用户加入的所有群聊
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            list: 群聊信息列表（含未读数占位）
+        """
+        return self._query(
+            "SELECT g.group_id, g.group_name, g.owner_id, gm.joined_at "
+            "FROM chat_group g JOIN group_member gm ON g.group_id=gm.group_id "
+            "WHERE gm.user_id=%s ORDER BY gm.joined_at DESC",
+            (user_id,)
+        )
+
+    def list_available(self, user_id):
+        """查询用户尚未加入的群聊（用于选择加入）
+
+        Args:
+            user_id: 用户ID
+
+        Returns:
+            list: 可加入的群聊列表
+        """
+        return self._query(
+            "SELECT g.group_id, g.group_name FROM chat_group g "
+            "WHERE g.group_id NOT IN "
+            "(SELECT gm.group_id FROM group_member gm WHERE gm.user_id=%s) "
+            "ORDER BY g.created_at ASC",
+            (user_id,)
+        )
+
+    def list_members(self, group_id):
+        """查询群成员列表
+
+        Args:
+            group_id: 群聊ID
+
+        Returns:
+            list: 成员信息列表
+        """
+        return self._query(
+            "SELECT u.user_id, u.username, u.nickname "
+            "FROM group_member gm JOIN user u ON u.user_id=gm.user_id "
+            "WHERE gm.group_id=%s",
+            (group_id,)
+        )
+
+    def list_member_ids(self, group_id):
+        """查询群成员ID列表（用于广播）
+
+        Args:
+            group_id: 群聊ID
+
+        Returns:
+            list: 成员user_id列表
+        """
+        rows = self._query(
+            "SELECT user_id FROM group_member WHERE group_id=%s",
+            (group_id,)
+        )
+        return [r["user_id"] for r in rows]
+
+
 class FileDAO(BaseDAO):
     """文件传输记录数据访问对象"""
 
@@ -205,3 +349,69 @@ class FileDAO(BaseDAO):
         else:
             sql = "UPDATE file_record SET status=%s WHERE file_id=%s"
         self._execute(sql, (status, file_id))
+
+
+class FriendRequestDAO(BaseDAO):
+    """好友申请数据访问对象"""
+
+    def create(self, from_id, to_id):
+        """创建好友申请
+
+        Args:
+            from_id: 申请人ID
+            to_id: 接收人ID
+
+        Returns:
+            int: 申请记录ID
+        """
+        return self._execute(
+            "INSERT INTO friend_request(from_id,to_id,status) VALUES(%s,%s,0)",
+            (from_id, to_id)
+        )
+
+    def find_pending(self, from_id, to_id):
+        """查询两人间是否有待处理的申请
+
+        Returns:
+            dict or None: 申请记录
+        """
+        return self._query_one(
+            "SELECT * FROM friend_request WHERE from_id=%s AND to_id=%s AND status=0",
+            (from_id, to_id)
+        )
+
+    def find_reverse_pending(self, uid_a, uid_b):
+        """查询双向是否有待处理的申请（A申请B 或 B申请A）
+
+        Returns:
+            dict or None: 申请记录
+        """
+        return self._query_one(
+            "SELECT * FROM friend_request WHERE ((from_id=%s AND to_id=%s) OR (from_id=%s AND to_id=%s)) AND status=0",
+            (uid_a, uid_b, uid_b, uid_a)
+        )
+
+    def list_incoming(self, user_id):
+        """查询收到的待处理申请（含申请人名称）
+
+        Returns:
+            list: 申请列表
+        """
+        return self._query(
+            "SELECT r.id, r.from_id, u.username, u.nickname "
+            "FROM friend_request r JOIN user u ON u.user_id=r.from_id "
+            "WHERE r.to_id=%s AND r.status=0 ORDER BY r.created_at DESC",
+            (user_id,)
+        )
+
+    def update_status(self, req_id, status):
+        """更新申请状态
+
+        Args:
+            req_id: 申请记录ID
+            status: 新状态（1=已同意 2=已拒绝）
+        """
+        self._execute(
+            "UPDATE friend_request SET status=%s WHERE id=%s",
+            (status, req_id)
+        )

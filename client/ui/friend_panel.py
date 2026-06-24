@@ -1,221 +1,519 @@
-from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QFrame, QWidget, QLineEdit
+"""好友面板（客户端）
+
+支持好友列表展示、添加好友、设置备注功能。
+UI 风格对齐设计稿：卡片式好友列表、圆形头像、在线状态标识。
+
+author: 董钧豪
+"""
+
+from PyQt5.QtWidgets import (
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QLineEdit, QScrollArea, QFrame, QWidget, QInputDialog,
+    QMessageBox, QDialog,
+)
 from PyQt5.QtCore import Qt
 from client.core.base_panel import BasePanel
+from client.ui.create_group_dialog import CreateGroupDialog
 from common.messages import MT
 
 
+# 头像颜色池
+_AVATAR_COLORS = [
+    "#6366F1", "#FB923C", "#F472B6", "#34D399",
+    "#A78BFA", "#FB7185", "#38BDF8", "#FBBF24",
+]
+
+
 class FriendPanel(BasePanel):
-    """好友面板 - 方案B样式"""
+    """好友面板"""
+
+    def __init__(self, parent, app):
+        self._friends = []  # 好友列表缓存
+        self._filter = "all"  # 当前筛选：all/online/offline
+        self._pending_requests = []  # 待处理的好友申请
+        super().__init__(parent, app)
 
     def subscribe(self):
+        """订阅好友相关消息"""
+        self.net.on(MT.FRIEND_LIST_RESP, self._on_friend_list)
+        self.net.on(MT.FRIEND_ADD_RESP, self._on_friend_add)
+        self.net.on(MT.FRIEND_REQ_NOTIFY, self._on_friend_req_notify)
+        self.net.on(MT.FRIEND_AGREE_RESP, self._on_friend_agree_resp)
+        self.net.on(MT.FRIEND_REQ_LIST_RESP, self._on_friend_req_list)
+        self.net.on(MT.GROUP_CREATE_RESP, self._on_group_create_resp)
+        self.net.on(MT.USER_LIST, self._on_user_list)
         self._build_ui()
-        # 订阅在线用户列表更新
-        self.app.net.on(MT.USER_LIST, self._on_user_list_update)
-
-    def _on_user_list_update(self, msg):
-        """处理用户列表更新"""
-        self.app.state.online_users = msg.get("online_users", [])
-        self._refresh_user_list()
 
     def _build_ui(self):
-        """构建好友列表界面"""
+        """构建好友面板UI"""
+        self.setStyleSheet("background-color: #EEF2FA;")
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # 头部
+        # ========== 标题栏 ==========
         header = QFrame()
-        header.setFixedHeight(68)
-        header.setStyleSheet("background-color: #F7F9FD;")
+        header.setFixedHeight(60)
+        header.setStyleSheet("background-color: #fff; border-bottom: 1px solid #EEF1F7;")
 
-        header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(24, 0, 24, 0)
+        hl = QHBoxLayout(header)
+        hl.setContentsMargins(24, 0, 24, 0)
 
         title = QLabel("好友列表")
-        title.setStyleSheet("font-size: 19px; font-weight: 800; color: #1E293B;")
-        header_layout.addWidget(title)
+        title.setStyleSheet("font-size: 28px; font-weight: 800; color: #1E293B;")
+        hl.addWidget(title)
 
-        header_layout.addStretch()
+        self._count_badge = QLabel("0 位")
+        self._count_badge.setStyleSheet("""
+            font-size: 15px; font-weight: 700; color: #2D6CF6;
+            background: #E7EFFC; padding: 3px 14px; border-radius: 10px;
+        """)
+        hl.addWidget(self._count_badge)
 
-        add_btn = QPushButton("+ 添加好友")
-        add_btn.setFixedHeight(36)
+        hl.addStretch()
+
+        # 发起群聊按钮
+        group_btn = QPushButton("＋ 发起群聊")
+        group_btn.setFixedHeight(44)
+        group_btn.setCursor(Qt.PointingHandCursor)
+        group_btn.setStyleSheet("""
+            QPushButton {
+                background: #E7EFFC; color: #2D6CF6;
+                border: none; border-radius: 13px;
+                font-size: 16px; font-weight: 700; padding: 0 20px;
+            }
+            QPushButton:hover { background: #D1E3FA; }
+        """)
+        group_btn.clicked.connect(self._on_create_group)
+        hl.addWidget(group_btn)
+
+        add_btn = QPushButton("＋ 添加好友")
+        add_btn.setFixedHeight(44)
+        add_btn.setCursor(Qt.PointingHandCursor)
         add_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #4F8DFD, stop:1 #2D6CF6);
-                color: white;
-                border: none;
-                border-radius: 12px;
-                font-size: 13px;
-                font-weight: 600;
-                
+                color: white; border: none; border-radius: 13px;
+                font-size: 16px; font-weight: 700; padding: 0 20px;
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #3B7FED, stop:1 #1D5CE6);
             }
         """)
-        header_layout.addWidget(add_btn)
+        add_btn.clicked.connect(self._on_add_friend)
+        hl.addWidget(add_btn)
 
         layout.addWidget(header)
 
+        # ========== 筛选和搜索 ==========
+        filter_bar = QFrame()
+        filter_bar.setStyleSheet("background-color: #F7F9FD;")
+        filter_bar.setFixedHeight(70)
+
+        fl = QHBoxLayout(filter_bar)
+        fl.setContentsMargins(26, 14, 26, 14)
+        fl.setSpacing(10)
+
         # 搜索框
-        search_container = QWidget()
-        search_container.setStyleSheet("background-color: #EEF2FA;")
-        search_layout = QHBoxLayout(search_container)
-        search_layout.setContentsMargins(24, 16, 24, 16)
-
-        search_box = QLineEdit()
-        search_box.setPlaceholderText("🔍 搜索好友")
-        search_box.setFixedHeight(42)
-        search_box.setStyleSheet("""
+        self._search_box = QLineEdit()
+        self._search_box.setPlaceholderText("搜索好友")
+        self._search_box.setFixedHeight(50)
+        self._search_box.setStyleSheet("""
             QLineEdit {
-                background-color: #fff;
-                border: none;
-                border-radius: 14px;
-                
-                font-size: 14px;
-                color: #1E293B;
-                
+                background-color: #fff; border: none; border-radius: 14px;
+                font-size: 15px; color: #1E293B; padding: 0 16px;
             }
-            QLineEdit::placeholder {
-                color: #A9B6C8;
-            }
+            QLineEdit::placeholder { color: #B0BAC8; }
         """)
-        search_layout.addWidget(search_box)
+        fl.addWidget(self._search_box)
 
-        layout.addWidget(search_container)
+        # 筛选按钮
+        self._filter_btns = {}
+        for key, label in [("all", "全部"), ("online", "在线"), ("offline", "离线")]:
+            btn = QPushButton(label)
+            btn.setFixedHeight(44)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setCheckable(True)
+            btn.clicked.connect(lambda checked, k=key: self._set_filter(k))
+            self._filter_btns[key] = btn
+            fl.addWidget(btn)
 
-        # 好友列表
+        self._update_filter_style()
+
+        layout.addWidget(filter_bar)
+
+        # ========== 好友列表（滚动） ==========
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: #EEF2FA;
-            }
+            QScrollArea { border: none; background-color: #F7F9FD; }
+            QScrollBar:vertical { background: transparent; width: 6px; }
+            QScrollBar::handle:vertical { background: rgba(100,116,139,0.22); border-radius: 6px; }
         """)
 
-        scroll_content = QWidget()
-        self.scroll_layout = QVBoxLayout(scroll_content)  # 保存引用以便刷新
-        self.scroll_layout.setContentsMargins(24, 12, 24, 12)
-        self.scroll_layout.setSpacing(12)
-        self.scroll_layout.setAlignment(Qt.AlignTop)
+        self._friend_content = QWidget()
+        self._friend_layout = QVBoxLayout(self._friend_content)
+        self._friend_layout.setContentsMargins(26, 12, 26, 12)
+        self._friend_layout.setSpacing(6)
+        self._friend_layout.setAlignment(Qt.AlignTop)
 
-        scroll.setWidget(scroll_content)
-        layout.addWidget(scroll)
+        scroll.setWidget(self._friend_content)
+        layout.addWidget(scroll, 1)
 
-        # 初始化时渲染用户列表
-        self._refresh_user_list()
+        # 网络连接后加载好友列表（初始化时网络尚未就绪）
+        if self.state.user_id is not None:
+            self.net.send({"type": MT.FRIEND_LIST})
 
-    def _refresh_user_list(self):
-        """刷新用户列表显示"""
-        # 如果还没有登录，不执行刷新
-        if not self.app.state.all_users:
-            return
+    # ==================== 筛选按钮样式 ====================
 
-        # 清空现有列表
-        while self.scroll_layout.count():
-            child = self.scroll_layout.takeAt(0)
+    def _update_filter_style(self):
+        """更新筛选按钮样式"""
+        for key, btn in self._filter_btns.items():
+            if key == self._filter:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: #E7EFFC; color: #2D6CF6;
+                        border: none; border-radius: 13px;
+                        font-size: 15px; font-weight: 700; padding: 0 18px;
+                    }
+                """)
+            else:
+                btn.setStyleSheet("""
+                    QPushButton {
+                        background: #fff; color: #94A3B8;
+                        border: none; border-radius: 13px;
+                        font-size: 15px; padding: 0 18px;
+                    }
+                    QPushButton:hover { background: #F7F9FD; color: #64748B; }
+                """)
+
+    def _set_filter(self, key):
+        """设置筛选条件"""
+        self._filter = key
+        self._update_filter_style()
+        self._refresh_friend_list()
+
+    # ==================== 圆形头像 ====================
+
+    def _create_avatar(self, size, text, color):
+        """创建圆形头像"""
+        avatar = QLabel(text)
+        avatar.setFixedSize(size, size)
+        avatar.setAlignment(Qt.AlignCenter)
+        avatar.setStyleSheet(f"""
+            font-size: {size // 2 - 2}px;
+            font-weight: 600;
+            color: white;
+            border-radius: {size // 2}px;
+            background-color: {color};
+        """)
+        return avatar
+
+    # ==================== 好友列表渲染 ====================
+
+    def _refresh_friend_list(self):
+        """刷新好友列表"""
+        while self._friend_layout.count():
+            child = self._friend_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
 
-        # 获取所有用户和在线用户ID集合
-        all_users = self.app.state.all_users
-        online_user_ids = {u["user_id"] for u in self.app.state.online_users}
+        # 1. 待处理的好友申请（置顶显示）
+        if self._pending_requests:
+            self._add_section_label(f"好友申请 · {len(self._pending_requests)} 条待处理")
+            for req in self._pending_requests:
+                self._add_request_card(req)
 
-        # 渲染所有用户
-        for user in all_users:
-            user_id = user["user_id"]
-            nickname = user.get("nickname") or user["username"]
-            username = user["username"]
+        # 2. 按筛选条件过滤好友
+        online_ids = {u["user_id"] for u in self.state.online_users}
+        filtered = self._friends
+        if self._filter == "online":
+            filtered = [f for f in self._friends if f.get("user_id") in online_ids]
+        elif self._filter == "offline":
+            filtered = [f for f in self._friends if f.get("user_id") not in online_ids]
 
-            # 判断是否在线
-            is_online = user_id in online_user_ids
-            status = "在线" if is_online else "离线"
+        if filtered:
+            # 分组：在线 / 离线
+            online_friends = [f for f in filtered if f.get("user_id") in online_ids]
+            offline_friends = [f for f in filtered if f.get("user_id") not in online_ids]
 
-            # 生成头像文字和颜色
-            avatar_text = nickname[0] if nickname else username[0]
-            colors = ["#6366F1", "#FB923C", "#34D399", "#F87171", "#F472B6", "#A78BFA"]
-            color = colors[user_id % len(colors)]
+            if online_friends:
+                self._add_section_label(f"在线 · {len(online_friends)} 人")
+                for i, f in enumerate(online_friends):
+                    self._add_friend_card(f, is_online=True,
+                                          color=_AVATAR_COLORS[i % len(_AVATAR_COLORS)])
 
-            item = self._create_friend_item(nickname, avatar_text, color, status, is_online)
-            self.scroll_layout.addWidget(item)
+            if offline_friends:
+                self._add_section_label(f"离线 · {len(offline_friends)} 人")
+                for i, f in enumerate(offline_friends):
+                    self._add_friend_card(f, is_online=False,
+                                          color=_AVATAR_COLORS[(i + len(online_friends)) % len(_AVATAR_COLORS)])
+        elif not self._pending_requests:
+            empty = QLabel("暂无好友")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet("font-size: 14px; color: #94A3B8; padding: 60px 0; background: transparent;")
+            self._friend_layout.addWidget(empty)
 
-    def _create_friend_item(self, name, avatar_text, color, status, is_online):
-        """创建好友列表项"""
-        item = QFrame()
-        item.setFixedHeight(72)
-        item.setStyleSheet("""
-            QFrame {
-                background-color: #fff;
-                border-radius: 16px;
-                
-            }
-            QFrame:hover {
-                background-color: #F7F9FD;
-            }
+        self._friend_layout.addStretch()
+
+    def _add_section_label(self, text):
+        """添加分组标题"""
+        container = QFrame()
+        container.setStyleSheet("background: transparent;")
+
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 10, 4, 6)
+
+        label = QLabel(text)
+        label.setStyleSheet("font-size: 14px; font-weight: 700; color: #94A3B8; letter-spacing: 1px; background: transparent;")
+        layout.addWidget(label)
+
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet("background-color: #E5EAF3;")
+        layout.addWidget(line, 1)
+
+        self._friend_layout.addWidget(container)
+
+    def _add_request_card(self, req):
+        """添加好友申请卡片（含同意/拒绝按钮）"""
+        container = QFrame()
+        container.setFixedHeight(76)
+        container.setStyleSheet("""
+            QFrame { background-color: #FFF8E7; border-radius: 18px; border: 1px solid #FDE68A; }
         """)
 
-        layout = QHBoxLayout(item)
-        layout.setContentsMargins(14, 14, 14, 14)
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(14)
 
-        # 头像（带在线状态）
-        avatar_container = QWidget()
-        avatar_container.setFixedSize(48, 48)
+        # 申请人信息
+        name = req.get("nickname") or req.get("username", "未知")
+        avatar = self._create_avatar(48, name[0] if name else "?", "#F59E0B")
+        layout.addWidget(avatar)
 
-        avatar = QLabel(avatar_text, avatar_container)
-        avatar.setFixedSize(48, 48)
-        avatar.setAlignment(Qt.AlignCenter)
-        avatar.setStyleSheet(f"""
-            background-color: {color};
-            color: white;
-            border-radius: 24px;
-            font-size: 16px;
-            font-weight: 600;
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
+        name_label = QLabel(name)
+        name_label.setStyleSheet("font-size: 16px; font-weight: 700; color: #1E293B; background: transparent;")
+        text_col.addWidget(name_label)
+        hint_label = QLabel("想加你为好友")
+        hint_label.setStyleSheet("font-size: 14px; color: #92400E; background: transparent;")
+        text_col.addWidget(hint_label)
+        layout.addLayout(text_col, 1)
+
+        # 同意按钮
+        agree_btn = QPushButton("同意")
+        agree_btn.setFixedHeight(38)
+        agree_btn.setCursor(Qt.PointingHandCursor)
+        agree_btn.setStyleSheet("""
+            QPushButton {
+                background: #34D399; color: white; border: none;
+                border-radius: 10px; font-size: 14px; font-weight: 700; padding: 0 18px;
+            }
+            QPushButton:hover { background: #10B981; }
+        """)
+        from_id = req.get("from_id")
+        agree_btn.clicked.connect(
+            lambda checked, fid=from_id: self.net.send(
+                {"type": MT.FRIEND_AGREE, "from_id": fid}
+            )
+        )
+        layout.addWidget(agree_btn)
+
+        # 拒绝按钮
+        reject_btn = QPushButton("拒绝")
+        reject_btn.setFixedHeight(38)
+        reject_btn.setCursor(Qt.PointingHandCursor)
+        reject_btn.setStyleSheet("""
+            QPushButton {
+                background: #F1F5F9; color: #94A3B8; border: none;
+                border-radius: 10px; font-size: 14px; padding: 0 18px;
+            }
+            QPushButton:hover { background: #E2E8F0; color: #64748B; }
+        """)
+        reject_btn.clicked.connect(
+            lambda checked, fid=from_id: self.net.send(
+                {"type": MT.FRIEND_REJECT, "from_id": fid}
+            )
+        )
+        layout.addWidget(reject_btn)
+
+        self._friend_layout.addWidget(container)
+
+    def _add_friend_card(self, friend, is_online, color):
+        """添加好友卡片"""
+        container = QFrame()
+        container.setFixedHeight(86)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #fff; border-radius: 18px;
+            }
+            QFrame:hover { background-color: #F7F9FD; }
         """)
 
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(16, 16, 20, 16)
+        layout.setSpacing(16)
+
+        # 圆形头像（带在线状态点）
+        avatar_container = QWidget()
+        avatar_container.setFixedSize(54, 54)
+        avatar_container.setStyleSheet("background: transparent;")
+
+        name = friend.get("remark") or friend.get("username", "?")
+        avatar_text = name[0] if name else "?"
+        avatar = self._create_avatar(58, avatar_text, color)
+        avatar.setParent(avatar_container)
+
         # 在线状态点
+        dot = QLabel(avatar_container)
+        dot.setFixedSize(14, 14)
         if is_online:
-            status_dot = QLabel("●", avatar_container)
-            status_dot.setFixedSize(12, 12)
-            status_dot.setStyleSheet("color: #34D399; font-size: 12px;")
-            status_dot.move(36, 36)
+            dot.setStyleSheet("background-color: #34D399; border-radius: 7px; border: 2.5px solid #fff;")
+        else:
+            dot.setStyleSheet("background-color: #CBD5E1; border-radius: 7px; border: 2.5px solid #fff;")
+        dot.move(40, 40)
 
         layout.addWidget(avatar_container)
 
-        # 信息区域
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(4)
+        # 文字信息
+        text_col = QVBoxLayout()
+        text_col.setSpacing(4)
 
         name_label = QLabel(name)
-        name_label.setStyleSheet("font-size: 15px; font-weight: 600; color: #1E293B;")
-        info_layout.addWidget(name_label)
+        name_label.setStyleSheet("font-size: 18px; font-weight: 700; color: #1E293B; background: transparent;")
+        text_col.addWidget(name_label)
 
-        status_label = QLabel(status)
-        status_label.setStyleSheet(f"font-size: 12px; color: {'#34D399' if is_online else '#94A3B8'};")
-        info_layout.addWidget(status_label)
+        status_label = QLabel("在线" if is_online else "离线")
+        status_label.setStyleSheet(
+            f"font-size: 15px; font-weight: 500; color: {'#34D399' if is_online else '#94A3B8'}; background: transparent;")
+        text_col.addWidget(status_label)
 
-        layout.addLayout(info_layout)
-        layout.addStretch()
+        layout.addLayout(text_col, 1)
 
-        # 消息按钮
+        # 操作按钮
         msg_btn = QPushButton("💬")
-        msg_btn.setFixedSize(38, 38)
+        msg_btn.setFixedSize(40, 40)
+        msg_btn.setCursor(Qt.PointingHandCursor)
         msg_btn.setStyleSheet("""
             QPushButton {
-                background-color: #E7EFFC;
-                color: #2D6CF6;
-                border: none;
-                border-radius: 12px;
-                font-size: 18px;
+                background: #E7EFFC; color: #2D6CF6;
+                border: none; border-radius: 13px; font-size: 18px;
             }
-            QPushButton:hover {
-                background-color: #D1E3FA;
-            }
+            QPushButton:hover { background: #D1E3FA; }
         """)
+        friend_id = friend.get("user_id")
+        friend_name = friend.get("username", "")
+        msg_btn.clicked.connect(
+            lambda checked, fid=friend_id, fname=friend_name:
+                self._switch_to_chat(fid, fname)
+        )
         layout.addWidget(msg_btn)
 
-        return item
+        # 更多按钮
+        more_btn = QPushButton("⋯")
+        more_btn.setFixedSize(40, 40)
+        more_btn.setCursor(Qt.PointingHandCursor)
+        more_btn.setStyleSheet("""
+            QPushButton {
+                background: #F1F5F9; color: #94A3B8;
+                border: none; border-radius: 13px; font-size: 18px;
+            }
+            QPushButton:hover { background: #E7EFFC; color: #2D6CF6; }
+        """)
+        more_btn.clicked.connect(
+            lambda checked, fid=friend_id, fname=name:
+                self._on_remark(fid, fname)
+        )
+        layout.addWidget(more_btn)
+
+        self._friend_layout.addWidget(container)
+
+    # ==================== 操作处理 ====================
+
+    def _on_add_friend(self):
+        """添加好友对话框（按用户ID搜索）"""
+        uid, ok = QInputDialog.getText(self, "添加好友", "请输入对方用户ID：")
+        if ok and uid.strip():
+            self.net.send({"type": MT.FRIEND_ADD, "target_id": uid.strip()})
+
+    def _on_friend_add(self, msg):
+        """添加好友结果"""
+        if msg.get("ok"):
+            QMessageBox.information(self, "成功", "好友申请已发送，等待对方同意")
+        else:
+            QMessageBox.warning(self, "失败", msg.get("reason", "添加失败"))
+
+    def _on_friend_req_notify(self, msg):
+        """收到好友申请通知，刷新申请列表"""
+        self.net.send({"type": MT.FRIEND_REQ_LIST})
+
+    def _on_friend_agree_resp(self, msg):
+        """好友申请被同意"""
+        if msg.get("accepted"):
+            QMessageBox.information(self, "成功", f"{msg.get('friend_name', '对方')} 已同意你的好友申请！")
+            self.net.send({"type": MT.FRIEND_LIST})
+
+    def _on_friend_req_list(self, msg):
+        """收到待处理申请列表"""
+        self._pending_requests = msg.get("requests", [])
+        self._refresh_friend_list()
+
+    def _on_create_group(self):
+        """发起群聊"""
+        if not self._friends:
+            QMessageBox.information(self, "提示", "没有好友可邀请")
+            return
+
+        dialog = CreateGroupDialog(self._friends, self)
+        if dialog.exec_() == QDialog.Accepted:
+            result = dialog.get_result()
+            if result:
+                self.net.send({"type": MT.GROUP_CREATE, **result})
+
+    def _on_group_create_resp(self, msg):
+        """创建群聊结果"""
+        if msg.get("ok"):
+            QMessageBox.information(
+                self, "成功",
+                f"群聊「{msg.get('group_name', '')}」创建成功！\n群ID: {msg.get('group_id', '')}"
+            )
+            # 刷新好友列表页面
+            self.net.send({"type": MT.FRIEND_LIST})
+        else:
+            QMessageBox.warning(self, "失败", msg.get("message", "创建群聊失败"))
+
+    def _on_remark(self, friend_id, current_name):
+        """设置备注对话框"""
+        remark, ok = QInputDialog.getText(self, "设置备注", f"为 {current_name} 设置备注：")
+        if ok:
+            self.net.send({"type": MT.FRIEND_REMARK, "friend_id": friend_id, "remark": remark.strip()})
+
+    def _switch_to_chat(self, friend_id, friend_name):
+        """切换到与该好友的聊天"""
+        self.app.main.switch_panel("chat")
+        # 在聊天面板中选中该好友
+        chat_panel = self.app.panels.get("chat")
+        if chat_panel:
+            chat_panel._on_contact_selected(
+                {"id": friend_id, "name": friend_name, "type": "p2p"}
+            )
+
+    def _on_friend_list(self, msg):
+        """收到好友列表"""
+        self._friends = msg.get("friends", [])
+        self._count_badge.setText(f"{len(self._friends)} 位")
+        self.state.friends = self._friends
+        self._refresh_friend_list()
+        # 同时也请求待处理申请列表
+        self.net.send({"type": MT.FRIEND_REQ_LIST})
+
+    def _on_user_list(self, msg):
+        """在线列表更新时刷新"""
+        self.state.online_users = msg.get("online_users", [])
+        self._refresh_friend_list()
