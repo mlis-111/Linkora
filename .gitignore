@@ -13,3 +13,5 @@ client_config.ini
 .claude/
 ui_design/
 系统首页UI设计-handoff.zip
+.coverage
+_ui_designs/
