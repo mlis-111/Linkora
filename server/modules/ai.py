@@ -116,7 +116,13 @@ def _do_ask(session, msg):
     except Exception:
         logging.exception("AI模块：查询历史失败")
 
-    # 追加当前问题
+    # 追加当前问题（含附件）
+    attachment_name = msg.get("attachment_name", "")
+    attachment_content = msg.get("attachment", "")
+    if attachment_name and attachment_content:
+        question = (f"用户上传了文件 '{attachment_name}'，内容如下：\n"
+                    f"```\n{attachment_content}\n```\n"
+                    f"用户问题：{question}")
     messages.append({"role": "user", "content": question})
 
     # 3) 调用 DeepSeek API（流式输出）

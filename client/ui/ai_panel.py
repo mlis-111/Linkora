@@ -12,7 +12,7 @@ import re
 from datetime import datetime
 
 from PyQt5.QtWidgets import (QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                             QLineEdit, QScrollArea, QFrame, QWidget)
+                             QLineEdit, QScrollArea, QFrame, QWidget, QFileDialog)
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QFont
 
@@ -434,17 +434,26 @@ class AIPanel(BasePanel):
         self._input_field.returnPressed.connect(self._on_send)
         icl.addWidget(self._input_field, 1)
 
-        attach_btn = QPushButton("📎")
-        attach_btn.setFixedSize(56, 56)
-        attach_btn.setCursor(Qt.PointingHandCursor)
-        attach_btn.setStyleSheet(f"""
+        self._attach_btn = QPushButton("📎")
+        self._attach_btn.setFixedSize(56, 56)
+        self._attach_btn.setCursor(Qt.PointingHandCursor)
+        self._attach_btn.setToolTip("添加附件")
+        self._attach_btn.clicked.connect(self._pick_attachment)
+        self._attach_btn.setStyleSheet(f"""
             QPushButton {{
                 background:{C_SIDEBAR_BG}; color:{C_SUBTLE};
                 border:none; border-radius:16px; font-size:28px;
             }}
             QPushButton:hover {{ background:#E2E8F0; }}
         """)
-        icl.addWidget(attach_btn)
+        icl.addWidget(self._attach_btn)
+
+        # 附件标签
+        self._attach_label = QLabel("")
+        self._attach_label.setStyleSheet(
+            f"font-size:{FZ_SMALL}; color:{C_PURPLE}; background:transparent; padding:4px 20px;")
+        self._attach_label.hide()
+        cl.addWidget(self._attach_label)
 
         self._send_btn = QPushButton("➤")
         self._send_btn.setFixedSize(64, 64)
@@ -717,6 +726,48 @@ class AIPanel(BasePanel):
         self._save_current_conv()
         self._refresh_history()
 
+    def _pick_attachment(self):
+        """选择附件文件（排除图片/视频/PPT/音乐）"""
+        import os
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择附件", "",
+            "文档/代码 (*.txt *.md *.py *.java *.c *.cpp *.js *.ts *.html *.css "
+            "*.json *.xml *.csv *.log *.sql *.docx *.pdf *.xlsx);;所有文件 (*)")
+        if not path:
+            return
+        name = os.path.basename(path)
+        ext = os.path.splitext(name)[1].lower()
+        blacklist = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+                     '.mp4', '.avi', '.mov', '.mkv', '.mp3', '.wav', '.flac',
+                     '.ppt', '.pptx', '.zip', '.rar', '.7z', '.exe'}
+        if ext in blacklist:
+            self._attach_label.setText(f"❌ 不支持的文件类型: {ext}")
+            self._attach_label.setStyleSheet(
+                f"font-size:{FZ_SMALL}; color:#FB7185; background:transparent; padding:4px 20px;")
+            self._attach_label.show()
+            return
+        try:
+            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                content = f.read()
+        except Exception:
+            try:
+                with open(path, 'r', encoding='latin-1', errors='replace') as f:
+                    content = f.read()
+            except Exception:
+                self._attach_label.setText("❌ 无法读取此文件")
+                self._attach_label.setStyleSheet(
+                    f"font-size:{FZ_SMALL}; color:#FB7185; background:transparent; padding:4px 20px;")
+                self._attach_label.show()
+                return
+        if len(content) > 8000:
+            content = content[:8000] + "\n...(内容已截断)"
+        self._attached_name = name
+        self._attached_content = content
+        self._attach_label.setText(f"📎 已附加: {name}")
+        self._attach_label.setStyleSheet(
+            f"font-size:{FZ_SMALL}; color:{C_PURPLE}; background:transparent; padding:4px 20px;")
+        self._attach_label.show()
+
     def _on_send(self):
         text = self._input_field.text().strip()
         if not text or self._is_waiting:
@@ -758,7 +809,15 @@ class AIPanel(BasePanel):
             self._stream_bubble.setText("AI 正在思考…")
         self._add_to_chat(self._stream_container)
 
-        self.net.send({"type": MT.AI_ASK, "question": text, "ts": ts})
+        payload = {"type": MT.AI_ASK, "question": text, "ts": ts}
+        attached = getattr(self, '_attached_name', None)
+        if attached:
+            payload["attachment_name"] = self._attached_name
+            payload["attachment"] = self._attached_content
+            self._attached_name = None
+            self._attached_content = None
+            self._attach_label.hide()
+        self.net.send(payload)
 
     def _on_server_error(self, msg):
         self._is_waiting = False
