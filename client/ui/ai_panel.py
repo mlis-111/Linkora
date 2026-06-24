@@ -75,7 +75,7 @@ class AIPanel(BasePanel):
         sidebar = QFrame()
         sidebar.setFixedWidth(320)
         sidebar.setStyleSheet(
-            f"background:{C_SIDEBAR}; border-right:1px solid #E5EAF3;")
+            f"background:{C_SIDEBAR}; border-right:1px solid {C_BORDER};")
 
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -107,7 +107,7 @@ class AIPanel(BasePanel):
         sep = QFrame()
         sep.setFixedHeight(1)
         sep.setStyleSheet(
-            "background:#E5EAF3; margin:0 24px;")
+            "background:{C_BORDER}; margin:0 24px;")
         layout.addWidget(sep)
 
         # ── 标题行 ──
@@ -128,7 +128,7 @@ class AIPanel(BasePanel):
                 background:{C_AI_BADGE}; color:{C_AI_PRIME}; border:none;
                 border-radius:12px; font-size:16px; font-weight:700;
             }}
-            QPushButton:hover {{ background:#DDD4FA; }}
+            QPushButton:hover {{ background:#D4CDF2; }}
         """)
         add.clicked.connect(self._new_conversation)
         tr_layout.addWidget(add)
@@ -141,7 +141,7 @@ class AIPanel(BasePanel):
         sb = QFrame()
         sb.setFixedHeight(44)
         sb.setStyleSheet(
-            f"background:{C_WHITE}; border-radius:14px; border:1px solid #E5EAF3;")
+            f"background:{C_WHITE}; border-radius:14px; border:1px solid {C_BORDER};")
         sbl = QHBoxLayout(sb)
         sbl.setContentsMargins(15, 0, 15, 0)
         sbl.setSpacing(10)
@@ -195,7 +195,7 @@ class AIPanel(BasePanel):
         item.setStyleSheet(
             f"QFrame {{ background:{C_AI_BADGE if active else 'transparent'};"
             f"border-radius:16px; }}"
-            f"QFrame:hover {{ background:{'#DDD4FA' if active else 'rgba(237,233,254,0.5)'}; }}")
+            f"QFrame:hover {{ background:{'#D4CDF2' if active else 'rgba(237,233,254,0.5)'}; }}")
         il = QVBoxLayout(item)
         il.setContentsMargins(14, 10, 14, 10)
         il.setSpacing(4)
@@ -273,7 +273,7 @@ class AIPanel(BasePanel):
                 border-radius:13px; font-size:14px; font-weight:600;
                 padding:0 16px;
             }}
-            QPushButton:hover {{ background:#DDD4FA; }}
+            QPushButton:hover {{ background:#D4CDF2; }}
         """)
         nb.clicked.connect(self._new_conversation)
         hl.addWidget(nb)
@@ -304,9 +304,9 @@ class AIPanel(BasePanel):
         self._empty_hint = QLabel(
             "<div style='text-align:center; padding:60px 0;'>"
             "<div style='font-size:48px; margin-bottom:16px;'>✨</div>"
-            "<div style='font-size:16px; font-weight:700; color:#64748B;'>"
+            "<div style='font-size:16px; font-weight:700; color:{C_SUBTLE};'>"
             "AI 智能助手</div>"
-            "<div style='font-size:13px; color:#94A3B8; margin-top:8px;'>"
+            "<div style='font-size:13px; color:{C_SUBTLE}; margin-top:8px;'>"
             "问我学习、工作和校园生活方面的问题</div>"
             "</div>")
         self._empty_hint.setAlignment(Qt.AlignCenter)
@@ -342,7 +342,7 @@ class AIPanel(BasePanel):
             chip.setStyleSheet(f"""
                 QPushButton {{
                     background:{C_WHITE}; border:1.5px solid {C_BORDER};
-                    border-radius:22px; font-size:13px; color:#64748B;
+                    border-radius:22px; font-size:13px; color:{C_SUBTLE};
                     padding:0 14px;
                 }}
                 QPushButton:hover {{
@@ -378,8 +378,7 @@ class AIPanel(BasePanel):
         self._send_btn.setCursor(Qt.PointingHandCursor)
         self._send_btn.setStyleSheet(f"""
             QPushButton {{
-                background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                    stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
+                background:{C_AI_PRIME};
                 color:white; border:none; border-radius:15px;
                 font-size:22px;
             }}
@@ -432,8 +431,7 @@ class AIPanel(BasePanel):
         bf = QFrame()
         bf.setStyleSheet(f"""
             QFrame {{
-                background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
-                    stop:0 {C_USER_BLUE}, stop:1 {C_USER_BLUE});
+                background:{C_USER_BLUE};
                 border-radius:12px;
                 
             }}
