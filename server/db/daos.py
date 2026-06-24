@@ -169,24 +169,38 @@ class FriendDAO(BaseDAO):
             (user_id,)
         )
 
-# /////////////////////////////////////////////////////////////////////////////////////////
-class GroupDAO(BaseDAO):
-    """群聊数据访问对象"""
-
-    def create(self, group_id, group_name, owner_id):
-        """创建群聊
+    def delete(self, user_id, friend_id):
+        """删除好友关系（双向）
 
         Args:
-            group_id: 群聊ID
-            group_name: 群聊名称
-            owner_id: 创建者ID
+            user_id: 用户ID
+            friend_id: 好友ID
 
         Returns:
             int: 影响行数
         """
         return self._execute(
-            "INSERT INTO chat_group(group_id,group_name,owner_id) VALUES(%s,%s,%s)",
-            (group_id, group_name, owner_id)
+            "DELETE FROM friend WHERE (user_id=%s AND friend_id=%s) OR (user_id=%s AND friend_id=%s)",
+            (user_id, friend_id, friend_id, user_id)
+        )
+
+# /////////////////////////////////////////////////////////////////////////////////////////
+class GroupDAO(BaseDAO):
+    """群聊数据访问对象"""
+
+    def create(self, group_name, owner_id):
+        """创建群聊，自动生成 group_id
+
+        Args:
+            group_name: 群聊名称
+            owner_id: 创建者ID
+
+        Returns:
+            int: 自动生成的 group_id
+        """
+        return self._execute(
+            "INSERT INTO chat_group(group_name,owner_id) VALUES(%s,%s)",
+            (group_name, owner_id)
         )
 
     def get_by_id(self, group_id):
@@ -260,6 +274,7 @@ class GroupDAO(BaseDAO):
         """
         return self._query(
             "SELECT g.group_id, g.group_name, g.owner_id, "
+            "gm.remark, "
             "CAST(gm.joined_at AS CHAR) AS joined_at "
             "FROM chat_group g JOIN group_member gm ON g.group_id=gm.group_id "
             "WHERE gm.user_id=%s ORDER BY gm.joined_at DESC",
@@ -293,7 +308,7 @@ class GroupDAO(BaseDAO):
             list: 成员信息列表
         """
         return self._query(
-            "SELECT u.user_id, u.username, u.nickname, gm.role "
+            "SELECT u.user_id, u.username, u.nickname, gm.role, gm.remark "
             "FROM group_member gm JOIN user u ON u.user_id=gm.user_id "
             "WHERE gm.group_id=%s",
             (group_id,)

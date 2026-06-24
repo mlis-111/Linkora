@@ -23,7 +23,7 @@ def mock_ctx():
     """创建 Mock ServerContext"""
     ctx = MagicMock()
     # GroupDAO 默认返回值
-    ctx.db.groups.get_by_id.return_value = {"group_id": "group_public", "group_name": "公共聊天室", "owner_id": None}
+    ctx.db.groups.get_by_id.return_value = {"group_id": 1, "group_name": "公共聊天室", "owner_id": None}
     ctx.db.groups.is_member.return_value = False
     ctx.db.groups.create.return_value = 1
     ctx.db.groups.add_member.return_value = 1
@@ -80,13 +80,10 @@ class TestHandleCreate:
         _handle_create(mock_session, {"group_name": "测试群"})
 
         # 验证创建群聊
-        mock_ctx.db.groups.create.assert_called()
-        args = mock_ctx.db.groups.create.call_args[0]
-        assert args[1] == "测试群"      # group_name
-        assert args[2] == 100            # owner_id
+        mock_ctx.db.groups.create.assert_called_with("测试群", 100)
 
         # 验证创建者自动加入
-        created_group_id = args[0]
+        created_group_id = mock_ctx.db.groups.create.return_value
         mock_ctx.db.groups.add_member.assert_called_with(created_group_id, 100)
 
         # 验证响应
@@ -102,7 +99,7 @@ class TestHandleCreate:
         _handle_create(mock_session, {"group_name": "好友群", "invitees": [200, 201]})
 
         # 验证邀请好友加入
-        created_group_id = mock_ctx.db.groups.create.call_args[0][0]
+        created_group_id = mock_ctx.db.groups.create.return_value
         # add_member 被调用 3 次：创建者 + 2 个好友
         assert mock_ctx.db.groups.add_member.call_count == 3
 
@@ -127,7 +124,7 @@ class TestHandleCreate:
         _handle_create(mock_session, {"group_name": "群", "invitees": [100, 200]})
 
         # 创建者已在创建时加入，不应重复 add_member
-        created_group_id = mock_ctx.db.groups.create.call_args[0][0]
+        created_group_id = mock_ctx.db.groups.create.return_value
         # 应该只 add_member 100(创建时) 和 200(邀请)
         # 由于跳过自己，add_member 只调用 2 次（创建者 + 200）
         assert mock_ctx.db.groups.add_member.call_count == 2
@@ -141,20 +138,20 @@ class TestHandleJoin:
     def test_normal_join(self, mock_session, mock_ctx):
         """正常加入公共群"""
         from server.modules.group import _handle_join
-        _handle_join(mock_session, {"group_id": "group_public"})
+        _handle_join(mock_session, {"group_id": 1})
 
-        mock_ctx.db.groups.add_member.assert_called_with("group_public", 100)
+        mock_ctx.db.groups.add_member.assert_called_with(1, 100)
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.GROUP_JOIN_RESP
         assert resp["ok"] == True
-        assert resp["group_id"] == "group_public"
+        assert resp["group_id"] == 1
 
     def test_join_already_member(self, mock_session, mock_ctx):
         """重复加入返回错误"""
         from server.modules.group import _handle_join
         mock_ctx.db.groups.is_member.return_value = True
-        _handle_join(mock_session, {"group_id": "group_public"})
+        _handle_join(mock_session, {"group_id": 1})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -165,7 +162,7 @@ class TestHandleJoin:
         """加入不存在的群"""
         from server.modules.group import _handle_join
         mock_ctx.db.groups.get_by_id.return_value = None
-        _handle_join(mock_session, {"group_id": "nonexistent"})
+        _handle_join(mock_session, {"group_id": 999})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -191,11 +188,11 @@ class TestHandleList:
         """查询我的群聊列表"""
         from server.modules.group import _handle_list
         mock_ctx.db.groups.list_by_user.return_value = [
-            {"group_id": "group_public", "group_name": "公共聊天室", "owner_id": None, "joined_at": "2024-01-01"},
-            {"group_id": "g_abc123", "group_name": "好友群", "owner_id": 100, "joined_at": "2024-01-02"},
+            {"group_id": 1, "group_name": "公共聊天室", "owner_id": None, "joined_at": "2024-01-01"},
+            {"group_id": 2, "group_name": "好友群", "owner_id": 100, "joined_at": "2024-01-02"},
         ]
         mock_ctx.db.groups.list_available.return_value = [
-            {"group_id": "g_xyz789", "group_name": "技术交流群"},
+            {"group_id": 3, "group_name": "技术交流群"},
         ]
 
         _handle_list(mock_session, {})
@@ -205,8 +202,8 @@ class TestHandleList:
         assert resp["type"] == MT.GROUP_LIST_RESP
         assert len(resp["my_groups"]) == 2
         assert len(resp["available"]) == 1
-        assert resp["my_groups"][0]["group_id"] == "group_public"
-        assert resp["available"][0]["group_id"] == "g_xyz789"
+        assert resp["my_groups"][0]["group_id"] == 1
+        assert resp["available"][0]["group_id"] == 3
 
     def test_list_empty(self, mock_session, mock_ctx):
         """没有群聊时返回空列表"""
@@ -233,19 +230,19 @@ class TestHandleMembers:
             {"user_id": 200, "username": "friend1", "nickname": "好友1"},
         ]
 
-        _handle_members(mock_session, {"group_id": "group_public"})
+        _handle_members(mock_session, {"group_id": 1})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.GROUP_MEMBERS_RESP
-        assert resp["group_id"] == "group_public"
+        assert resp["group_id"] == 1
         assert len(resp["members"]) == 2
 
     def test_members_nonexistent_group(self, mock_session, mock_ctx):
         """查询不存在的群成员"""
         from server.modules.group import _handle_members
         mock_ctx.db.groups.get_by_id.return_value = None
-        _handle_members(mock_session, {"group_id": "nonexistent"})
+        _handle_members(mock_session, {"group_id": 999})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -263,12 +260,12 @@ class TestHandleInvite:
         mock_ctx.db.groups.is_member.side_effect = lambda gid, uid: uid == 100  # 只有创建者是成员
         mock_ctx.db.groups.add_member.return_value = 1
 
-        _handle_invite(mock_session, {"group_id": "g_abc123", "invitees": [200, 201]})
+        _handle_invite(mock_session, {"group_id": 2, "invitees": [200, 201]})
 
         # 验证邀请
         assert mock_ctx.db.groups.add_member.call_count == 2
-        mock_ctx.db.groups.add_member.assert_any_call("g_abc123", 200)
-        mock_ctx.db.groups.add_member.assert_any_call("g_abc123", 201)
+        mock_ctx.db.groups.add_member.assert_any_call(2, 200)
+        mock_ctx.db.groups.add_member.assert_any_call(2, 201)
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -279,7 +276,7 @@ class TestHandleInvite:
         from server.modules.group import _handle_invite
         mock_ctx.db.groups.is_member.return_value = False
 
-        _handle_invite(mock_session, {"group_id": "g_abc123", "invitees": [200]})
+        _handle_invite(mock_session, {"group_id": 2, "invitees": [200]})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -291,10 +288,10 @@ class TestHandleInvite:
         from server.modules.group import _handle_invite
         mock_ctx.db.groups.is_member.side_effect = lambda gid, uid: uid in [100, 200]
 
-        _handle_invite(mock_session, {"group_id": "g_abc123", "invitees": [200, 201]})
+        _handle_invite(mock_session, {"group_id": 2, "invitees": [200, 201]})
 
         # 200 已在群中，只有 201 被加入
-        mock_ctx.db.groups.add_member.assert_called_once_with("g_abc123", 201)
+        mock_ctx.db.groups.add_member.assert_called_once_with(2, 201)
         resp = mock_session.send.call_args[0][0]
         assert resp["skipped"] == [200]
 
@@ -324,12 +321,12 @@ class TestHandleInfoReq:
         mock_ctx.db.groups.get_role.return_value = 0
         mock_ctx.online.is_online.return_value = False
 
-        _handle_info_req(mock_session, {"group_id": "g_abc123"})
+        _handle_info_req(mock_session, {"group_id": 2})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.GROUP_INFO_RESP
-        assert resp["group_id"] == "g_abc123"
+        assert resp["group_id"] == 2
         assert resp["group_name"] == "公共聊天室"
         assert resp["owner_id"] is None
         assert resp["my_role"] == 0
@@ -339,7 +336,7 @@ class TestHandleInfoReq:
         """查询不存在的群"""
         from server.modules.group import _handle_info_req
         mock_ctx.db.groups.get_by_id.return_value = None
-        _handle_info_req(mock_session, {"group_id": "nonexistent"})
+        _handle_info_req(mock_session, {"group_id": 999})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -349,7 +346,7 @@ class TestHandleInfoReq:
         """非群成员查询返回错误"""
         from server.modules.group import _handle_info_req
         mock_ctx.db.groups.is_member.return_value = False
-        _handle_info_req(mock_session, {"group_id": "g_abc123"})
+        _handle_info_req(mock_session, {"group_id": 2})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -374,13 +371,13 @@ class TestHandleUpdateName:
         """群主更新群名"""
         from server.modules.group import _handle_update_name
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "旧名", "owner_id": 100
+            "group_id": 2, "group_name": "旧名", "owner_id": 100
         }
         mock_ctx.db.groups.get_role.return_value = 0
 
-        _handle_update_name(mock_session, {"group_id": "g_abc123", "group_name": "新群名"})
+        _handle_update_name(mock_session, {"group_id": 2, "group_name": "新群名"})
 
-        mock_ctx.db.groups.update_name.assert_called_with("g_abc123", "新群名")
+        mock_ctx.db.groups.update_name.assert_called_with(2, "新群名")
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["ok"] == True
@@ -389,23 +386,23 @@ class TestHandleUpdateName:
         """管理员更新群名"""
         from server.modules.group import _handle_update_name
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "旧名", "owner_id": 200  # 群主是别人
+            "group_id": 2, "group_name": "旧名", "owner_id": 200  # 群主是别人
         }
         mock_ctx.db.groups.get_role.return_value = 1  # 当前用户是管理员
 
-        _handle_update_name(mock_session, {"group_id": "g_abc123", "group_name": "新群名"})
+        _handle_update_name(mock_session, {"group_id": 2, "group_name": "新群名"})
 
-        mock_ctx.db.groups.update_name.assert_called_with("g_abc123", "新群名")
+        mock_ctx.db.groups.update_name.assert_called_with(2, "新群名")
 
     def test_member_cannot_update_name(self, mock_session, mock_ctx):
         """普通成员不能修改群名"""
         from server.modules.group import _handle_update_name
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "旧名", "owner_id": 200
+            "group_id": 2, "group_name": "旧名", "owner_id": 200
         }
         mock_ctx.db.groups.get_role.return_value = 0  # 普通成员
 
-        _handle_update_name(mock_session, {"group_id": "g_abc123", "group_name": "新群名"})
+        _handle_update_name(mock_session, {"group_id": 2, "group_name": "新群名"})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -416,7 +413,7 @@ class TestHandleUpdateName:
         """不存在的群返回错误"""
         from server.modules.group import _handle_update_name
         mock_ctx.db.groups.get_by_id.return_value = None
-        _handle_update_name(mock_session, {"group_id": "nonexistent", "group_name": "新名"})
+        _handle_update_name(mock_session, {"group_id": 999, "group_name": "新名"})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -425,7 +422,7 @@ class TestHandleUpdateName:
     def test_update_name_empty(self, mock_session, mock_ctx):
         """空群名返回错误"""
         from server.modules.group import _handle_update_name
-        _handle_update_name(mock_session, {"group_id": "g_abc123", "group_name": "  "})
+        _handle_update_name(mock_session, {"group_id": 2, "group_name": "  "})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -441,9 +438,9 @@ class TestHandleSetRemark:
         """正常设置备注"""
         from server.modules.group import _handle_set_remark
         mock_ctx.db.groups.is_member.return_value = True
-        _handle_set_remark(mock_session, {"group_id": "g_abc123", "remark": "我的备注"})
+        _handle_set_remark(mock_session, {"group_id": 2, "remark": "我的备注"})
 
-        mock_ctx.db.groups.set_remark.assert_called_with(100, "g_abc123", "我的备注")
+        mock_ctx.db.groups.set_remark.assert_called_with(100, 2, "我的备注")
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["ok"] == True
@@ -452,7 +449,7 @@ class TestHandleSetRemark:
         """非群成员设置备注返回错误"""
         from server.modules.group import _handle_set_remark
         mock_ctx.db.groups.is_member.return_value = False
-        _handle_set_remark(mock_session, {"group_id": "g_abc123", "remark": "备注"})
+        _handle_set_remark(mock_session, {"group_id": 2, "remark": "备注"})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -477,13 +474,13 @@ class TestHandleRemoveMember:
         """群主移除普通成员"""
         from server.modules.group import _handle_remove_member
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 100
+            "group_id": 2, "group_name": "测试群", "owner_id": 100
         }
         mock_ctx.db.groups.get_role.return_value = 0
 
-        _handle_remove_member(mock_session, {"group_id": "g_abc123", "target_id": 200})
+        _handle_remove_member(mock_session, {"group_id": 2, "target_id": 200})
 
-        mock_ctx.db.groups.remove_member.assert_called_with("g_abc123", 200)
+        mock_ctx.db.groups.remove_member.assert_called_with(2, 200)
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["ok"] == True
@@ -492,22 +489,22 @@ class TestHandleRemoveMember:
         """管理员移除普通成员"""
         from server.modules.group import _handle_remove_member
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 200
+            "group_id": 2, "group_name": "测试群", "owner_id": 200
         }
         # 当前用户(100)是管理员，目标(300)是普通成员
         mock_ctx.db.groups.get_role.side_effect = lambda gid, uid: 1 if uid == 100 else 0
 
-        _handle_remove_member(mock_session, {"group_id": "g_abc123", "target_id": 300})
+        _handle_remove_member(mock_session, {"group_id": 2, "target_id": 300})
 
-        mock_ctx.db.groups.remove_member.assert_called_with("g_abc123", 300)
+        mock_ctx.db.groups.remove_member.assert_called_with(2, 300)
 
     def test_remove_owner_forbidden(self, mock_session, mock_ctx):
         """不能移除群主"""
         from server.modules.group import _handle_remove_member
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 200
+            "group_id": 2, "group_name": "测试群", "owner_id": 200
         }
-        _handle_remove_member(mock_session, {"group_id": "g_abc123", "target_id": 200})
+        _handle_remove_member(mock_session, {"group_id": 2, "target_id": 200})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -518,11 +515,11 @@ class TestHandleRemoveMember:
         """管理员不能移除其他管理员"""
         from server.modules.group import _handle_remove_member
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 300
+            "group_id": 2, "group_name": "测试群", "owner_id": 300
         }
         mock_ctx.db.groups.get_role.side_effect = lambda gid, uid: 1 if uid == 100 else 1  # 双方都是管理员
 
-        _handle_remove_member(mock_session, {"group_id": "g_abc123", "target_id": 200})
+        _handle_remove_member(mock_session, {"group_id": 2, "target_id": 200})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -532,7 +529,7 @@ class TestHandleRemoveMember:
         """不存在的群返回错误"""
         from server.modules.group import _handle_remove_member
         mock_ctx.db.groups.get_by_id.return_value = None
-        _handle_remove_member(mock_session, {"group_id": "nonexistent", "target_id": 200})
+        _handle_remove_member(mock_session, {"group_id": 999, "target_id": 200})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -542,11 +539,11 @@ class TestHandleRemoveMember:
         """普通成员不能移除他人"""
         from server.modules.group import _handle_remove_member
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 300
+            "group_id": 2, "group_name": "测试群", "owner_id": 300
         }
         mock_ctx.db.groups.get_role.return_value = 0  # 普通成员
 
-        _handle_remove_member(mock_session, {"group_id": "g_abc123", "target_id": 200})
+        _handle_remove_member(mock_session, {"group_id": 2, "target_id": 200})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -571,13 +568,13 @@ class TestHandleSetAdmin:
         """群主设置他人为管理员"""
         from server.modules.group import _handle_set_admin
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 100
+            "group_id": 2, "group_name": "测试群", "owner_id": 100
         }
         mock_ctx.db.groups.is_member.return_value = True
 
-        _handle_set_admin(mock_session, {"group_id": "g_abc123", "target_id": 200, "role": 1})
+        _handle_set_admin(mock_session, {"group_id": 2, "target_id": 200, "role": 1})
 
-        mock_ctx.db.groups.set_role.assert_called_with("g_abc123", 200, 1)
+        mock_ctx.db.groups.set_role.assert_called_with(2, 200, 1)
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["ok"] == True
@@ -586,21 +583,21 @@ class TestHandleSetAdmin:
         """群主取消管理员"""
         from server.modules.group import _handle_set_admin
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 100
+            "group_id": 2, "group_name": "测试群", "owner_id": 100
         }
         mock_ctx.db.groups.is_member.return_value = True
 
-        _handle_set_admin(mock_session, {"group_id": "g_abc123", "target_id": 200, "role": 0})
+        _handle_set_admin(mock_session, {"group_id": 2, "target_id": 200, "role": 0})
 
-        mock_ctx.db.groups.set_role.assert_called_with("g_abc123", 200, 0)
+        mock_ctx.db.groups.set_role.assert_called_with(2, 200, 0)
 
     def test_set_admin_not_owner(self, mock_session, mock_ctx):
         """非群主不能设置管理员"""
         from server.modules.group import _handle_set_admin
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 200
+            "group_id": 2, "group_name": "测试群", "owner_id": 200
         }
-        _handle_set_admin(mock_session, {"group_id": "g_abc123", "target_id": 300, "role": 1})
+        _handle_set_admin(mock_session, {"group_id": 2, "target_id": 300, "role": 1})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -610,9 +607,9 @@ class TestHandleSetAdmin:
         """群主不能给自己设管理员"""
         from server.modules.group import _handle_set_admin
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 100
+            "group_id": 2, "group_name": "测试群", "owner_id": 100
         }
-        _handle_set_admin(mock_session, {"group_id": "g_abc123", "target_id": 100, "role": 1})
+        _handle_set_admin(mock_session, {"group_id": 2, "target_id": 100, "role": 1})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -622,10 +619,10 @@ class TestHandleSetAdmin:
         """目标不是群成员返回错误"""
         from server.modules.group import _handle_set_admin
         mock_ctx.db.groups.get_by_id.return_value = {
-            "group_id": "g_abc123", "group_name": "测试群", "owner_id": 100
+            "group_id": 2, "group_name": "测试群", "owner_id": 100
         }
         mock_ctx.db.groups.is_member.return_value = False
-        _handle_set_admin(mock_session, {"group_id": "g_abc123", "target_id": 999, "role": 1})
+        _handle_set_admin(mock_session, {"group_id": 2, "target_id": 999, "role": 1})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
@@ -635,7 +632,7 @@ class TestHandleSetAdmin:
         """不存在的群返回错误"""
         from server.modules.group import _handle_set_admin
         mock_ctx.db.groups.get_by_id.return_value = None
-        _handle_set_admin(mock_session, {"group_id": "nonexistent", "target_id": 200, "role": 1})
+        _handle_set_admin(mock_session, {"group_id": 999, "target_id": 200, "role": 1})
 
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]

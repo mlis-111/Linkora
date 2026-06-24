@@ -5,13 +5,8 @@
 author: 董钧豪
 """
 
-import uuid
+import time
 from common.messages import MT, error
-
-
-def _generate_group_id():
-    """生成唯一群聊ID，格式：g_xxxxxx（8位十六进制）"""
-    return "g_" + uuid.uuid4().hex[:8]
 
 
 def register(router, ctx):
@@ -55,8 +50,7 @@ def _handle_create(session, msg):
         session.send(error("INVALID_PARAM", "群聊名称不能为空"))
         return
 
-    group_id = _generate_group_id()
-    ctx.db.groups.create(group_id, group_name, owner_id)
+    group_id = ctx.db.groups.create(group_name, owner_id)
     ctx.db.groups.add_member(group_id, owner_id)
 
     # 邀请成员
@@ -96,7 +90,7 @@ def _handle_join(session, msg):
         msg: 消息字典，包含 group_id
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
     user_id = session.user_id
 
     if not group_id:
@@ -152,7 +146,7 @@ def _handle_members(session, msg):
         msg: 消息字典，包含 group_id
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
 
     if not group_id:
         session.send(error("INVALID_PARAM", "缺少群聊ID"))
@@ -182,7 +176,7 @@ def _handle_invite(session, msg):
         msg: 消息字典，包含 group_id, invitees（[user_id, ...]）
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
     invitees = msg.get("invitees", [])
     user_id = session.user_id
 
@@ -239,7 +233,7 @@ def _handle_info_req(session, msg):
         msg: 消息字典，包含 group_id
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
     user_id = session.user_id
 
     if not group_id:
@@ -258,7 +252,11 @@ def _handle_info_req(session, msg):
     # 获取成员列表并标注在线状态
     members = ctx.db.groups.list_members(group_id)
     member_list = []
+    my_remark = ""
     for m in members:
+        is_current = m["user_id"] == user_id
+        if is_current:
+            my_remark = m.get("remark", "") or ""
         member_list.append({
             "user_id": m["user_id"],
             "username": m["username"],
@@ -276,6 +274,7 @@ def _handle_info_req(session, msg):
         "group_name": group.get("group_name", ""),
         "owner_id": group.get("owner_id"),
         "my_role": my_role,
+        "my_remark": my_remark,
         "members": member_list,
     })
 
@@ -288,7 +287,7 @@ def _handle_update_name(session, msg):
         msg: 消息字典，包含 group_id, group_name
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
     new_name = msg.get("group_name", "").strip()
     user_id = session.user_id
 
@@ -308,6 +307,7 @@ def _handle_update_name(session, msg):
         session.send(error("FORBIDDEN", "无权修改群名"))
         return
 
+    old_name = group.get("group_name", "")
     ctx.db.groups.update_name(group_id, new_name)
 
     session.send({
@@ -326,6 +326,18 @@ def _handle_update_name(session, msg):
         "updated_by": user_id,
     }, member_ids)
 
+    # 在群聊中插入一条系统消息
+    sys_content = f"{session.username} 已将群名改为 {new_name}"
+    ctx.db.messages.insert(2, 0, None, group_id, sys_content)
+    encrypted_sys = ctx.crypto.encrypt(sys_content)
+    ctx.online.broadcast_to({
+        "type": MT.ROOM_CHAT,
+        "room_id": group_id,
+        "from": 0,
+        "content": encrypted_sys,
+        "ts": int(time.time()),
+    }, member_ids)
+
 
 def _handle_set_remark(session, msg):
     """设置用户对群聊的个人备注
@@ -335,7 +347,7 @@ def _handle_set_remark(session, msg):
         msg: 消息字典，包含 group_id, remark
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
     remark = msg.get("remark", "").strip()
     user_id = session.user_id
 
@@ -366,7 +378,7 @@ def _handle_remove_member(session, msg):
         msg: 消息字典，包含 group_id, target_id
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
     target_id = msg.get("target_id")
     user_id = session.user_id
 
@@ -422,7 +434,7 @@ def _handle_set_admin(session, msg):
         msg: 消息字典，包含 group_id, target_id, role（1=设为管理员, 0=取消管理员）
     """
     ctx = session.ctx
-    group_id = msg.get("group_id", "")
+    group_id = msg.get("group_id", 0)
     target_id = msg.get("target_id")
     new_role = msg.get("role", 0)
     user_id = session.user_id
