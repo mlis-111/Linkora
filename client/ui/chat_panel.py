@@ -14,8 +14,10 @@ class ChatPanel(BasePanel):
         self.app.net.on(MT.USER_LIST, self._on_user_list_update)
 
     def _on_user_list_update(self, msg):
-        """更新在线人数显示"""
+        """更新在线人数显示（同步更新 all_users）"""
         self.app.state.online_users = msg.get("online_users", [])
+        if msg.get("all_users"):
+            self.app.state.all_users = msg["all_users"]
         self._update_online_count()
         self._refresh_conversation_list()
 
