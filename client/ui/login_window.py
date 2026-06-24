@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import (
     QLabel, QLineEdit, QPushButton, QVBoxLayout, QHBoxLayout,
     QFrame, QCheckBox
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSettings
 from common.messages import MT
 from client.core.base_panel import BasePanel
 
@@ -31,6 +31,12 @@ class LoginWindow(BasePanel):
         self.net.on(MT.REGISTER_RESP, self._on_register_resp)
         self._mode = self.MODE_LOGIN
         self._build_ui()
+        # 加载记住的用户名
+        self._settings = QSettings("CampusIM", "login")
+        saved_user = self._settings.value("username", "")
+        if saved_user:
+            self.login_username.setText(saved_user)
+            self.remember_cb.setChecked(True)
 
     # ── 工具方法 ──────────────────────────────
 
@@ -570,6 +576,14 @@ class LoginWindow(BasePanel):
             self.state.username = msg.get("nickname", msg.get("username", ""))
             self.state.online_users = msg.get("online_users", [])
             self.state.all_users = msg.get("all_users", [])
+
+            # 记住用户名
+            username = self.login_username.text().strip()
+            if self.remember_cb.isChecked():
+                self._settings.setValue("username", username)
+            else:
+                self._settings.remove("username")
+
             self.hide()
             self.app.main.show_main()
         else:
