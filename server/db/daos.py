@@ -293,7 +293,7 @@ class GroupDAO(BaseDAO):
             list: 成员信息列表
         """
         return self._query(
-            "SELECT u.user_id, u.username, u.nickname "
+            "SELECT u.user_id, u.username, u.nickname, gm.role "
             "FROM group_member gm JOIN user u ON u.user_id=gm.user_id "
             "WHERE gm.group_id=%s",
             (group_id,)
@@ -313,6 +313,63 @@ class GroupDAO(BaseDAO):
             (group_id,)
         )
         return [r["user_id"] for r in rows]
+
+    def update_name(self, group_id, new_name):
+        """更新群聊名称
+
+        Args:
+            group_id: 群聊ID
+            new_name: 新群名
+
+        Returns:
+            int: 影响行数
+        """
+        return self._execute(
+            "UPDATE chat_group SET group_name=%s WHERE group_id=%s",
+            (new_name, group_id)
+        )
+
+    def set_remark(self, user_id, group_id, remark):
+        """设置用户对群聊的个人备注
+
+        Args:
+            user_id: 用户ID
+            group_id: 群聊ID
+            remark: 备注内容
+        """
+        self._execute(
+            "UPDATE group_member SET remark=%s WHERE user_id=%s AND group_id=%s",
+            (remark, user_id, group_id)
+        )
+
+    def set_role(self, group_id, user_id, role):
+        """设置群成员角色
+
+        Args:
+            group_id: 群聊ID
+            user_id: 用户ID
+            role: 角色（0=成员, 1=管理员）
+        """
+        self._execute(
+            "UPDATE group_member SET role=%s WHERE group_id=%s AND user_id=%s",
+            (role, group_id, user_id)
+        )
+
+    def get_role(self, group_id, user_id):
+        """查询用户在群中的角色
+
+        Args:
+            group_id: 群聊ID
+            user_id: 用户ID
+
+        Returns:
+            int: 角色（0=成员, 1=管理员），非成员返回0
+        """
+        row = self._query_one(
+            "SELECT role FROM group_member WHERE group_id=%s AND user_id=%s",
+            (group_id, user_id)
+        )
+        return row["role"] if row else 0
 
 
 class FileDAO(BaseDAO):

@@ -49,6 +49,15 @@ class MT:
     GROUP_MEMBERS_RESP = "group_members_resp"
     GROUP_INVITE = "group_invite"
 
+    # 群设置
+    GROUP_INFO       = "group_info"
+    GROUP_INFO_RESP  = "group_info_resp"
+    GROUP_UPDATE_NAME = "group_update_name"
+    GROUP_SET_REMARK  = "group_set_remark"
+    GROUP_REMOVE_MEMBER = "group_remove_member"
+    GROUP_SET_ADMIN    = "group_set_admin"
+    GROUP_NAME_UPDATED = "group_name_updated"
+
     # 错误
     ERROR = "error"
 

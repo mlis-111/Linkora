@@ -44,6 +44,7 @@ class FriendPanel(BasePanel):
         self.net.on(MT.FRIEND_REJECTED, self._on_friend_rejected)
         self.net.on(MT.FRIEND_REQ_LIST_RESP, self._on_friend_req_list)
         self.net.on(MT.GROUP_CREATE_RESP, self._on_group_create_resp)
+        self.net.on(MT.GROUP_INVITE, self._on_group_invited)
         self.net.on(MT.USER_LIST, self._on_user_list)
         self._build_ui()
 
@@ -508,8 +509,7 @@ class FriendPanel(BasePanel):
         friend_id = msg.get("friend_id")
 
         if msg.get("accepted"):
-            # 申请方：对方同意了，立即发送申请附言
-            QMessageBox.information(self, "成功", f"{msg.get('friend_name', '对方')} 已同意你的好友申请！")
+            # 申请方：先发送申请附言，再弹提示（避免 QMessageBox 阻塞导致消息顺序错乱）
             req_msg = msg.get("request_message", "").strip()
             if req_msg:
                 encrypted = self.app.crypto.encrypt(req_msg)
@@ -517,6 +517,7 @@ class FriendPanel(BasePanel):
                     "type": MT.CHAT, "to": friend_id,
                     "content": encrypted, "ts": int(time.time()),
                 })
+            QMessageBox.information(self, "成功", f"{msg.get('friend_name', '对方')} 已同意你的好友申请！")
         elif msg.get("ok") and friend_id:
             # 同意方：延迟发送问候消息（让申请方的消息先到）
             encrypted = self.app.crypto.encrypt("我们现在是好友啦")
@@ -584,6 +585,23 @@ class FriendPanel(BasePanel):
         else:
             from PyQt5.QtWidgets import QMessageBox
             QMessageBox.warning(self, "失败", msg.get("message", "创建群聊失败"))
+
+    def _on_group_invited(self, msg):
+        """被邀请加入群聊 — 刷新群聊列表使新群聊显示在对话列表中"""
+        # 先将群名写入本地缓存，避免服务端响应前显示为"加载中…"
+        group_id = msg.get("group_id", "")
+        group_name = msg.get("group_name", "")
+        if group_id and group_name:
+            chat_panel = self.app.panels.get("chat")
+            if chat_panel:
+                exists = any(g["group_id"] == group_id for g in chat_panel._my_groups)
+                if not exists:
+                    chat_panel._my_groups.append({
+                        "group_id": group_id,
+                        "group_name": group_name,
+                    })
+                chat_panel._refresh_conv_list()
+        self.net.send({"type": MT.GROUP_LIST})
 
     def _on_remark(self, friend_id, current_name):
         """设置备注对话框"""

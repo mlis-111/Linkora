@@ -77,7 +77,7 @@ class TestHandleFriendAdd:
         mock_ctx.db.users.get_by_id.assert_called_with(200)
 
         # 验证创建好友申请（不是直接加好友）
-        mock_ctx.db.friend_requests.create.assert_called_with(100, 200)
+        mock_ctx.db.friend_requests.create.assert_called_with(100, 200, "")
         mock_ctx.db.friends.add.assert_not_called()
 
         # 验证响应
@@ -197,7 +197,7 @@ class TestHandleFriendReject:
         mock_ctx.db.friend_requests.find_pending.return_value = {"id": 1}
         handle_friend_reject(mock_session, {"from_id": 200})
 
-        mock_ctx.db.friend_requests.update_status.assert_called_with(1, 2)
+        mock_ctx.db.friend_requests.reject.assert_called_with(1, "")
 
 
 # ========== 查询待处理申请测试 ==========
