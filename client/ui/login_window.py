@@ -31,11 +31,17 @@ class LoginWindow(BasePanel):
         self.net.on(MT.REGISTER_RESP, self._on_register_resp)
         self._mode = self.MODE_LOGIN
         self._build_ui()
-        # 加载记住的用户名
+        # 记住密码功能：输入用户名时自动填充已保存的密码
         self._settings = QSettings("CampusIM", "login")
-        saved_user = self._settings.value("username", "")
-        if saved_user:
-            self.login_username.setText(saved_user)
+        self.login_username.textChanged.connect(self._on_username_changed)
+
+    def _on_username_changed(self, text):
+        """用户名输入变化时，查找已保存的密码并自动填充"""
+        if not text:
+            return
+        saved = self._settings.value(text.strip(), "")
+        if saved:
+            self.login_password.setText(saved)
             self.remember_cb.setChecked(True)
 
     # ── 工具方法 ──────────────────────────────
@@ -577,12 +583,13 @@ class LoginWindow(BasePanel):
             self.state.online_users = msg.get("online_users", [])
             self.state.all_users = msg.get("all_users", [])
 
-            # 记住用户名
+            # 记住密码：勾选则保存用户名→密码映射，取消则清除
             username = self.login_username.text().strip()
+            password = self.login_password.text().strip()
             if self.remember_cb.isChecked():
-                self._settings.setValue("username", username)
+                self._settings.setValue(username, password)
             else:
-                self._settings.remove("username")
+                self._settings.remove(username)
 
             self.hide()
             self.app.main.show_main()
