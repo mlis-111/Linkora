@@ -42,9 +42,9 @@ class ChatClient:
                 border-radius: 12px;
                 border-top-left-radius: 4px;
                 padding: 12px 16px;
-                font-size: 15px;
+                font-size: 19px;
             }
-            QLabel#AIBubbleText { font-size: 15px; color: #222222; }
+            QLabel#AIBubbleText { font-size: 19px; color: #222222; }
 
             QFrame#UserBubble {
                 background-color: #5971F2;
@@ -53,18 +53,18 @@ class ChatClient:
                 border-top-right-radius: 4px;
                 padding: 12px 16px;
             }
-            QLabel#UserBubbleText { font-size: 15px; color: #FFFFFF; }
+            QLabel#UserBubbleText { font-size: 19px; color: #FFFFFF; }
 
             QPushButton#RecommendBtn {
                 background-color: #FFFFFF;
                 border: 1px solid #E5E5E5;
                 border-radius: 16px;
                 padding: 6px 12px;
-                font-size: 13px;
+                font-size: 17px;
             }
 
             QLineEdit#InputField {
-                font-size: 15px;
+                font-size: 19px;
                 padding-left: 16px;
                 padding-right: 16px;
                 border-radius: 24px;

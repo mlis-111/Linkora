@@ -100,7 +100,7 @@ class AIPanel(BasePanel):
 
         brand_text = QLabel("校园通\nAI 智能助手")
         brand_text.setStyleSheet(
-            f"font-size:16px; font-weight:800; color:{C_DARK}; line-height:1.3;")
+            f"font-size:20px; font-weight:800; color:{C_DARK}; line-height:1.3;")
         brand_layout.addWidget(brand_text)
         brand_layout.addStretch()
         layout.addWidget(brand)
@@ -118,7 +118,7 @@ class AIPanel(BasePanel):
         tr_layout.setContentsMargins(24, 18, 24, 10)
         title = QLabel("历史对话")
         title.setStyleSheet(
-            f"font-size:16px; font-weight:700; color:{C_DARK};")
+            f"font-size:20px; font-weight:700; color:{C_DARK};")
         tr_layout.addWidget(title)
         tr_layout.addStretch()
 
@@ -153,7 +153,7 @@ class AIPanel(BasePanel):
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("搜索对话")
         self._search_input.setStyleSheet(
-            "border:none; background:transparent; font-size:14px; color:#1E293B;")
+            "border:none; background:transparent; font-size:18px; color:#1E293B;")
         sbl.addWidget(self._search_input)
         sc_layout.addWidget(sb)
         layout.addWidget(sc)
@@ -206,13 +206,13 @@ class AIPanel(BasePanel):
         tl = QLabel(title_text)
         tl.setObjectName("HistoryItemTitle")
         tl.setStyleSheet(
-            f"font-size:14px; font-weight:{'700' if active else 'bold'};"
+            f"font-size:18px; font-weight:{'700' if active else 'bold'};"
             f"color:{C_AI_PRIME if active else '#333333'};")
         il.addWidget(tl)
         sl = QLabel(subtitle)
         sl.setObjectName("HistoryItemSub")
         sl.setStyleSheet(
-            f"font-size:12px; color:{C_AI_PRIME if active else '#999999'};")
+            f"font-size:16px; color:{C_AI_PRIME if active else '#999999'};")
         il.addWidget(sl)
         return item
 
@@ -242,7 +242,7 @@ class AIPanel(BasePanel):
         av.setStyleSheet(f"""
             background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
                 stop:0 {C_AI_PRIME}, stop:1 {C_AI_PRIME});
-            color:white; border-radius:20px; font-size:24px;
+            color:white; border-radius:20px; font-size:20px;
         """)
         hl.addWidget(av)
 
@@ -252,19 +252,19 @@ class AIPanel(BasePanel):
         nr = QHBoxLayout()
         nr.setSpacing(9)
         nm = QLabel("AI 助手")
-        nm.setStyleSheet(f"font-size:16px; font-weight:800; color:{C_DARK};")
+        nm.setStyleSheet(f"font-size:20px; font-weight:800; color:{C_DARK};")
         nr.addWidget(nm)
         bd = QLabel("智能问答")
         bd.setFixedHeight(22)
         bd.setStyleSheet(f"""
-            font-size:12px; font-weight:700; color:{C_AI_PRIME};
+            font-size:16px; font-weight:700; color:{C_AI_PRIME};
             background:{C_AI_BADGE}; padding:2px 9px; border-radius:8px;
         """)
         nr.addWidget(bd)
         nr.addStretch()
         info.addLayout(nr)
         st = QLabel("随时问我学习、工作和校园生活方面的问题")
-        st.setStyleSheet(f"font-size:13px; color:{C_SUBTLE};")
+        st.setStyleSheet(f"font-size:17px; color:{C_SUBTLE};")
         info.addWidget(st)
         hl.addLayout(info)
         hl.addStretch()
@@ -276,7 +276,7 @@ class AIPanel(BasePanel):
         nb.setStyleSheet(f"""
             QPushButton {{
                 background:{C_AI_BADGE}; color:{C_AI_PRIME}; border:none;
-                border-radius:13px; font-size:14px; font-weight:600;
+                border-radius:13px; font-size:18px; font-weight:600;
                 padding:0 16px;
             }}
             QPushButton:hover {{ background:#D4CDF2; }}
@@ -312,7 +312,7 @@ class AIPanel(BasePanel):
             "<div style='font-size:48px; margin-bottom:16px;'>✨</div>"
             "<div style='font-size:16px; font-weight:700; color:{C_SUBTLE};'>"
             "AI 智能助手</div>"
-            "<div style='font-size:13px; color:{C_SUBTLE}; margin-top:8px;'>"
+            "<div style='font-size:17px; color:{C_SUBTLE}; margin-top:8px;'>"
             "问我学习、工作和校园生活方面的问题</div>"
             "</div>")
         self._empty_hint.setAlignment(Qt.AlignCenter)
@@ -348,7 +348,7 @@ class AIPanel(BasePanel):
             chip.setCursor(Qt.PointingHandCursor)
             chip.setStyleSheet(f"""
                 QPushButton#RecommendBtn {{
-                    font-size:13px;
+                    font-size:17px;
                     background:{C_WHITE}; border:1px solid {C_BORDER};
                     border-radius:16px; padding:6px 12px;
                     color:{C_SUBTLE};
@@ -422,7 +422,7 @@ class AIPanel(BasePanel):
         av.setStyleSheet(f"""
             background:qlineargradient(x1:0,y1:0,x2:1,y2:1,
                 stop:0 {C_USER_BLUE}, stop:1 {C_USER_BLUE});
-            color:white; border-radius:20px; font-size:16px; font-weight:700;
+            color:white; border-radius:20px; font-size:20px; font-weight:700;
         """)
         lo.addWidget(av)
 
@@ -434,7 +434,7 @@ class AIPanel(BasePanel):
 
         tm = QLabel(ts_str)
         tm.setAlignment(Qt.AlignRight)
-        tm.setStyleSheet(f"font-size:12px; color:{C_SUBTLE};")
+        tm.setStyleSheet(f"font-size:16px; color:{C_SUBTLE};")
         tl.addWidget(tm)
 
         # 气泡容器（用 QFrame 实现不对称圆角）
@@ -444,7 +444,7 @@ class AIPanel(BasePanel):
             QFrame#UserBubble {{
                 background:{C_USER_BLUE}; color:#FFFFFF;
                 border-radius:12px; border-top-right-radius:4px;
-                padding:12px 16px; font-size:15px;
+                padding:12px 16px; font-size:19px;
             }}
         """)
         bl = QVBoxLayout(bf)
@@ -455,7 +455,7 @@ class AIPanel(BasePanel):
         bt.setMaximumWidth(480)
         bt.setTextFormat(Qt.PlainText)
         bt.setStyleSheet(
-            "color:#FFFFFF; font-size:15px; background:transparent; border:none;")
+            "color:#FFFFFF; font-size:19px; background:transparent; border:none;")
         bt.setContentsMargins(0, 0, 0, 0)
         bl.addWidget(bt)
         tl.addWidget(bf, alignment=Qt.AlignRight)
@@ -491,7 +491,7 @@ class AIPanel(BasePanel):
         tl.setSpacing(6)
 
         info = QLabel(f"AI 助手 · {ts_str}")
-        info.setStyleSheet(f"font-size:12px; color:{C_SUBTLE};")
+        info.setStyleSheet(f"font-size:16px; color:{C_SUBTLE};")
         tl.addWidget(info)
 
         bf = QFrame()
@@ -500,7 +500,7 @@ class AIPanel(BasePanel):
             QFrame#AIBubble {{
                 background:{C_WHITE}; border:1px solid #DDDDDD;
                 border-radius:12px; border-top-left-radius:4px;
-                padding:12px 16px; font-size:15px;
+                padding:12px 16px; font-size:19px;
             }}
         """)
         bl = QVBoxLayout(bf)
@@ -511,7 +511,7 @@ class AIPanel(BasePanel):
         bt.setMaximumWidth(520)
         bt.setTextFormat(Qt.RichText)
         bt.setStyleSheet(
-            "color:#222222; font-size:15px; background:transparent; border:none;")
+            "color:#222222; font-size:19px; background:transparent; border:none;")
         bt.setContentsMargins(0, 0, 0, 0)
         bl.addWidget(bt)
         tl.addWidget(bf)
@@ -541,7 +541,7 @@ class AIPanel(BasePanel):
         top = QHBoxLayout()
         ll = QLabel(language)
         ll.setStyleSheet(
-            "font-size:12px; font-family:Consolas,monospace; "
+            "font-size:17px; font-family:Consolas,monospace; "
             "font-weight:600; color:#7C9EC8; background:transparent; border:none;")
         top.addWidget(ll)
         top.addStretch()
@@ -560,7 +560,7 @@ class AIPanel(BasePanel):
         cl.setTextFormat(Qt.PlainText)
         cl.setWordWrap(False)
         cl.setStyleSheet(
-            "font-family:'Consolas','Courier New',monospace; font-size:13px;"
+            "font-family:'Consolas','Courier New',monospace; font-size:17px;"
             "color:#E2E8F0; background:transparent; border:none;"
             "line-height:1.75;")
         bl.addWidget(cl)
@@ -593,7 +593,7 @@ class AIPanel(BasePanel):
         self._waiting = QLabel("✨ AI 正在思考…")
         self._waiting.setContentsMargins(0, 8, 0, 8)
         self._waiting.setStyleSheet(
-            f"font-size:13px; color:{C_SUBTLE}; background:transparent;")
+            f"font-size:17px; color:{C_SUBTLE}; background:transparent;")
         self._add_to_chat(self._waiting)
 
         # 流式状态
@@ -642,7 +642,7 @@ class AIPanel(BasePanel):
                 tl.setSpacing(6)
 
                 info = QLabel("AI 助手")
-                info.setStyleSheet(f"font-size:12px; color:{C_SUBTLE};")
+                info.setStyleSheet(f"font-size:16px; color:{C_SUBTLE};")
                 tl.addWidget(info)
 
                 bf = QFrame()
@@ -651,7 +651,7 @@ class AIPanel(BasePanel):
                     QFrame#AIBubble {{
                         background:{C_WHITE}; border:1px solid #DDDDDD;
                         border-radius:12px; border-top-left-radius:4px;
-                        padding:12px 16px; font-size:15px;
+                        padding:12px 16px; font-size:19px;
                     }}
                 """)
                 bl = QVBoxLayout(bf)
@@ -662,7 +662,7 @@ class AIPanel(BasePanel):
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.PlainText)
                 bt.setStyleSheet(
-                    "color:#222222; font-size:15px; background:transparent; border:none;")
+                    "color:#222222; font-size:19px; background:transparent; border:none;")
                 bt.setContentsMargins(0, 0, 0, 0)
                 bl.addWidget(bt)
                 tl.addWidget(bf)
@@ -736,7 +736,7 @@ class AIPanel(BasePanel):
         """)
         hr.addWidget(av)
         info = QLabel(f"AI 助手 · {ts_str}")
-        info.setStyleSheet(f"font-size:12px; color:{C_SUBTLE};")
+        info.setStyleSheet(f"font-size:16px; color:{C_SUBTLE};")
         hr.addWidget(info)
         hr.addStretch()
         cl.addLayout(hr)
@@ -749,7 +749,7 @@ class AIPanel(BasePanel):
                     QFrame#AIBubble {{
                         background:{C_WHITE}; border:1px solid #DDDDDD;
                         border-radius:12px; border-top-left-radius:4px;
-                        padding:12px 16px; font-size:15px;
+                        padding:12px 16px; font-size:19px;
                     }}
                 """)
                 bl = QVBoxLayout(bf)
@@ -760,7 +760,7 @@ class AIPanel(BasePanel):
                 bt.setMaximumWidth(520)
                 bt.setTextFormat(Qt.RichText)
                 bt.setStyleSheet(
-                    "color:#222222; font-size:15px; background:transparent; border:none;")
+                    "color:#222222; font-size:19px; background:transparent; border:none;")
                 bt.setContentsMargins(0, 0, 0, 0)
                 bl.addWidget(bt)
                 cl.addWidget(bf)
@@ -786,7 +786,7 @@ class AIPanel(BasePanel):
         """)
         lo.addWidget(av)
         info = QLabel("AI 助手 · 正在思考…")
-        info.setStyleSheet(f"font-size:12px; color:{C_SUBTLE};")
+        info.setStyleSheet(f"font-size:16px; color:{C_SUBTLE};")
         lo.addWidget(info)
         lo.addStretch()
         return w
@@ -829,7 +829,7 @@ class AIPanel(BasePanel):
         text = re.sub(
             r"`([^`]+)`",
             r'<code style="background:#F1F5F9; padding:1px 7px; '
-            r'border-radius:5px; font-size:13px; color:#5B21B6;">\1</code>',
+            r'border-radius:5px; font-size:17px; color:#5B21B6;">\1</code>',
             text)
         text = text.replace("\n", "<br>")
         return text
