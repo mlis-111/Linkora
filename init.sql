@@ -6,7 +6,6 @@ DROP DATABASE IF EXISTS campus_im;
 CREATE DATABASE campus_im DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 USE campus_im;
 SET NAMES utf8mb4;
-
 -- 创建用户表
 CREATE TABLE user (
     user_id INT PRIMARY KEY AUTO_INCREMENT,
@@ -25,7 +24,7 @@ CREATE TABLE message (
     msg_type TINYINT NOT NULL COMMENT '1=私聊, 2=群聊',
     sender_id INT NOT NULL,
     receiver_id INT COMMENT '私聊时有值',
-    room_id VARCHAR(32) COMMENT '群聊时有值',
+    room_id INT COMMENT '群聊时有值',
     content TEXT NOT NULL COMMENT '存储明文',
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_p2p (sender_id, receiver_id, sent_at),
@@ -70,7 +69,7 @@ CREATE TABLE friend_request (
 
 -- 创建群聊表
 CREATE TABLE chat_group (
-    group_id VARCHAR(32) PRIMARY KEY,
+    group_id INT PRIMARY KEY AUTO_INCREMENT,
     group_name VARCHAR(100) NOT NULL,
     owner_id INT COMMENT '群主，公共群为 NULL',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -78,7 +77,7 @@ CREATE TABLE chat_group (
 
 -- 创建群成员表
 CREATE TABLE group_member (
-    group_id VARCHAR(32) NOT NULL,
+    group_id INT NOT NULL,
     user_id INT NOT NULL,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     role   TINYINT     NOT NULL DEFAULT 0 COMMENT '0=成员, 1=管理员',
@@ -86,8 +85,8 @@ CREATE TABLE group_member (
     PRIMARY KEY (group_id, user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 插入默认公共群聊
-INSERT INTO chat_group (group_id, group_name, owner_id) VALUES ('group_public', '公共聊天室', NULL);
+-- 插入默认公共群聊（固定 ID=1，与 PUBLIC_ROOM_ID=1 对应）
+INSERT INTO chat_group (group_id, group_name, owner_id) VALUES (1, '公共聊天室', NULL);
 
 -- 插入预置数据
 -- AI账号 (user_id=1, password: ai123456)

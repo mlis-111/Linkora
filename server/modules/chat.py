@@ -78,7 +78,7 @@ def handle_room_chat(session, msg):
         msg: 消息字典，包含 room_id/content/ts 字段
     """
     ctx = session.ctx
-    room_id = msg.get("room_id", "")
+    room_id = msg.get("room_id", 0)
     cipher_content = msg.get("content", "")
 
     if not room_id:

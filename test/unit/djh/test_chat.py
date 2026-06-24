@@ -27,7 +27,7 @@ def mock_ctx():
     ctx.online.is_online.return_value = True
     ctx.online.send.return_value = True
     # 群聊相关 mock
-    ctx.db.groups.get_by_id.return_value = {"group_id": "group_public", "group_name": "公共聊天室"}
+    ctx.db.groups.get_by_id.return_value = {"group_id": 1, "group_name": "公共聊天室"}
     ctx.db.groups.is_member.return_value = True
     ctx.db.groups.list_member_ids.return_value = [100, 200, 300]
     return ctx
@@ -125,15 +125,15 @@ class TestHandleRoomChat:
     def test_normal_room_chat(self, mock_session, mock_ctx):
         """正常群聊流程"""
         from server.modules.chat import handle_room_chat
-        msg = {"room_id": "group_public", "content": "room_msg_encrypted", "ts": 12345}
+        msg = {"room_id": 1, "content": "room_msg_encrypted", "ts": 12345}
         handle_room_chat(mock_session, msg)
 
         # 验证校验群成员
-        mock_ctx.db.groups.is_member.assert_called_with("group_public", 100)
+        mock_ctx.db.groups.is_member.assert_called_with(1, 100)
 
         # 验证解密和入库
         mock_ctx.crypto.decrypt.assert_called_with("room_msg_encrypted")
-        mock_ctx.db.messages.insert.assert_called_with(2, 100, None, "group_public", "decrypted_room_msg_encrypted")
+        mock_ctx.db.messages.insert.assert_called_with(2, 100, None, 1, "decrypted_room_msg_encrypted")
 
         # 验证广播给群成员
         mock_ctx.online.broadcast_to.assert_called_with(msg, [100, 200, 300])
@@ -150,7 +150,7 @@ class TestHandleRoomChat:
     def test_room_chat_empty_content(self, mock_session):
         """空内容时返回错误"""
         from server.modules.chat import handle_room_chat
-        handle_room_chat(mock_session, {"room_id": "group_public", "content": ""})
+        handle_room_chat(mock_session, {"room_id": 1, "content": ""})
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.ERROR
@@ -159,7 +159,7 @@ class TestHandleRoomChat:
         """非群成员发消息被拒"""
         from server.modules.chat import handle_room_chat
         mock_ctx.db.groups.is_member.return_value = False
-        handle_room_chat(mock_session, {"room_id": "group_public", "content": "hi"})
+        handle_room_chat(mock_session, {"room_id": 1, "content": "hi"})
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.ERROR
@@ -169,7 +169,7 @@ class TestHandleRoomChat:
         """群聊不存在时返回错误"""
         from server.modules.chat import handle_room_chat
         mock_ctx.db.groups.get_by_id.return_value = None
-        handle_room_chat(mock_session, {"room_id": "nonexistent", "content": "hi"})
+        handle_room_chat(mock_session, {"room_id": 999, "content": "hi"})
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.ERROR
@@ -178,7 +178,7 @@ class TestHandleRoomChat:
     def test_room_chat_sets_from(self, mock_session):
         """自动补充发送者ID"""
         from server.modules.chat import handle_room_chat
-        msg = {"room_id": "group_public", "content": "hi"}
+        msg = {"room_id": 1, "content": "hi"}
         handle_room_chat(mock_session, msg)
         assert msg["from"] == 100
 
@@ -212,9 +212,9 @@ class TestHandleHistory:
         mock_ctx.db.messages.query_room.return_value = [
             {"sender_id": 100, "receiver_id": None, "content": "hello all", "sent_at": "2024-01-01 10:00:00"},
         ]
-        handle_history(mock_session, {"scope": "room", "room_id": "group_public"})
+        handle_history(mock_session, {"scope": "room", "room_id": 1})
 
-        mock_ctx.db.messages.query_room.assert_called_with("group_public")
+        mock_ctx.db.messages.query_room.assert_called_with(1)
         mock_session.send.assert_called()
         resp = mock_session.send.call_args[0][0]
         assert resp["type"] == MT.HISTORY_RESP

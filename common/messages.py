@@ -14,6 +14,10 @@ class MT:
     HISTORY_REQ = "history_req"
     HISTORY_RESP = "history_resp"
 
+    # 用户搜索
+    USER_SEARCH = "user_search"
+    USER_SEARCH_RESP = "user_search_resp"
+
     # 好友
     FRIEND_ADD = "friend_add"
     FRIEND_ADD_RESP = "friend_add_resp"
@@ -27,6 +31,8 @@ class MT:
     FRIEND_REJECTED = "friend_rejected"  # 通知申请方被拒绝
     FRIEND_REQ_LIST = "friend_req_list"
     FRIEND_REQ_LIST_RESP = "friend_req_list_resp"
+    FRIEND_REMOVE = "friend_remove"
+    FRIEND_REMOVE_RESP = "friend_remove_resp"
 
     # 文件传输
     FILE_REQ = "file_req"
@@ -62,7 +68,7 @@ class MT:
     ERROR = "error"
 
 
-PUBLIC_ROOM_ID = "group_public"
+PUBLIC_ROOM_ID = 1
 
 
 def error(code, message):

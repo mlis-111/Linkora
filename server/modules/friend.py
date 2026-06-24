@@ -13,9 +13,11 @@ def register(router, ctx):
     router.register(MT.FRIEND_ADD, handle_friend_add)
     router.register(MT.FRIEND_REMARK, handle_friend_remark)
     router.register(MT.FRIEND_LIST, handle_friend_list)
+    router.register(MT.USER_SEARCH, handle_user_search)
     router.register(MT.FRIEND_AGREE, handle_friend_agree)
     router.register(MT.FRIEND_REJECT, handle_friend_reject)
     router.register(MT.FRIEND_REQ_LIST, handle_friend_req_list)
+    router.register(MT.FRIEND_REMOVE, handle_friend_remove)
 
 
 def handle_friend_add(session, msg):
@@ -80,6 +82,53 @@ def handle_friend_add(session, msg):
             "from_name": session.username,
             "message": req_msg,
         })
+
+
+def handle_user_search(session, msg):
+    """按用户ID搜索用户
+
+    Args:
+        session: Session 实例
+        msg: 消息字典，包含 target_id 字段
+    """
+    ctx = session.ctx
+    target_id = msg.get("target_id")
+
+    if not target_id:
+        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": "用户ID不能为空"})
+        return
+
+    try:
+        target_id = int(target_id)
+    except (ValueError, TypeError):
+        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": "用户ID格式错误"})
+        return
+
+    # 查找用户
+    user = ctx.db.users.get_by_id(target_id)
+    if not user:
+        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": f"用户 {target_id} 不存在"})
+        return
+
+    # 不能搜索自己
+    if target_id == session.user_id:
+        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": "不能添加自己为好友"})
+        return
+
+    # 检查是否已经是好友
+    friends = ctx.db.friends.list_by_user(session.user_id)
+    is_friend = any(f["user_id"] == target_id for f in friends)
+
+    session.send({
+        "type": MT.USER_SEARCH_RESP,
+        "ok": True,
+        "user": {
+            "user_id": user["user_id"],
+            "username": user["username"],
+            "nickname": user.get("nickname", "") or user["username"],
+            "is_friend": is_friend,
+        },
+    })
 
 
 def handle_friend_agree(session, msg):
@@ -237,4 +286,32 @@ def handle_friend_list(session, msg):
     session.send({
         "type": MT.FRIEND_LIST_RESP,
         "friends": result,
+    })
+
+
+def handle_friend_remove(session, msg):
+    """处理删除好友（双向删除关系）
+
+    Args:
+        session: Session 实例
+        msg: 消息字典，包含 friend_id
+    """
+    ctx = session.ctx
+    friend_id = msg.get("friend_id")
+
+    if not friend_id:
+        session.send({"type": MT.FRIEND_REMOVE_RESP, "ok": False, "reason": "缺少好友ID"})
+        return
+
+    ctx.db.friends.delete(session.user_id, friend_id)
+
+    session.send({
+        "type": MT.FRIEND_REMOVE_RESP,
+        "ok": True,
+    })
+
+    # 刷新自己的好友列表
+    session.send({
+        "type": MT.FRIEND_LIST_RESP,
+        "friends": ctx.db.friends.list_by_user(session.user_id),
     })

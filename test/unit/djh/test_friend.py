@@ -52,8 +52,8 @@ class TestRegister:
         router = MagicMock()
         ctx = MagicMock()
         friend.register(router, ctx)
-        # 新增了 FRIEND_AGREE / FRIEND_REJECT / FRIEND_REQ_LIST 三个 handler
-        assert router.register.call_count == 6
+        # 新增 FRIEND_REMOVE handler
+        assert router.register.call_count == 7
         types = [call[0][0] for call in router.register.call_args_list]
         assert MT.FRIEND_ADD in types
         assert MT.FRIEND_REMARK in types
@@ -61,6 +61,7 @@ class TestRegister:
         assert MT.FRIEND_AGREE in types
         assert MT.FRIEND_REJECT in types
         assert MT.FRIEND_REQ_LIST in types
+        assert MT.FRIEND_REMOVE in types
 
 
 # ========== 添加好友测试 ==========
@@ -293,3 +294,31 @@ class TestHandleFriendList:
         offline_f = next(f for f in resp["friends"] if f["user_id"] == 201)
         assert online_f["online"] == True
         assert offline_f["online"] == False
+
+
+class TestHandleRemove:
+    """删除好友"""
+
+    def test_normal_remove(self, mock_session, mock_ctx):
+        """正常删除好友"""
+        from server.modules.friend import handle_friend_remove
+        mock_ctx.db.friends.delete.return_value = 1
+        handle_friend_remove(mock_session, {"friend_id": 200})
+
+        mock_ctx.db.friends.delete.assert_called_with(100, 200)
+        mock_session.send.assert_called()
+        calls = mock_session.send.call_args_list
+        # 第一次调用是删除结果，第二次是刷新好友列表
+        assert calls[0][0][0]["type"] == MT.FRIEND_REMOVE_RESP
+        assert calls[0][0][0]["ok"] == True
+
+    def test_remove_missing_id(self, mock_session, mock_ctx):
+        """缺少好友ID"""
+        from server.modules.friend import handle_friend_remove
+        handle_friend_remove(mock_session, {})
+
+        mock_session.send.assert_called()
+        resp = mock_session.send.call_args[0][0]
+        assert resp["type"] == MT.FRIEND_REMOVE_RESP
+        assert resp["ok"] == False
+        assert "好友ID" in resp["reason"]
