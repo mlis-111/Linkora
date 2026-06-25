@@ -60,8 +60,14 @@ class AIPanel(BasePanel):
         self._current_conv_idx = -1
         self._is_waiting = False
         self._cancelled = False
+        self._history_loaded = False
+        self._conv_id = int(time.time())  # 面板创建即生成 conv_id
         self.app.net.on(MT.AI_ANSWER, self._on_ai_answer)
+        self.app.net.on(MT.AI_HISTORY_RESP, self._on_ai_history)
         self.app.net.on(MT.ERROR, self._on_server_error)
+        self.app.net.on(MT.LOGIN_RESP, self._on_login_for_history)
+        if self.app.state.user_id:
+            self._load_history()
         self._build_ui()
 
     # ═══════════════════════════════════════════════════
@@ -809,7 +815,8 @@ class AIPanel(BasePanel):
             self._stream_bubble.setText("AI 正在思考…")
         self._add_to_chat(self._stream_container)
 
-        payload = {"type": MT.AI_ASK, "question": text, "ts": ts}
+        payload = {"type": MT.AI_ASK, "question": text, "ts": ts,
+                   "conv_id": self._conv_id}
         attached = getattr(self, '_attached_name', None)
         if attached:
             payload["attachment_name"] = self._attached_name
@@ -830,6 +837,61 @@ class AIPanel(BasePanel):
             {"role": "ai", "content": error_text, "ts": ts_str})
         self._add_to_chat(self._ai_bubble(error_text, ts_str))
 
+    # ═══════════════════════════════════════════════════
+    #  历史记录加载
+    # ═══════════════════════════════════════════════════
+
+    def _on_login_for_history(self, msg):
+        """登录成功后自动拉取 AI 历史"""
+        if msg.get("ok") and not self._history_loaded:
+            self._load_history()
+
+    def _load_history(self):
+        """向服务器请求 AI 历史记录"""
+        if self._history_loaded:
+            return
+        self._history_loaded = True
+        self.net.send({"type": MT.AI_HISTORY_REQ})
+
+    def _on_ai_history(self, msg):
+        """收到服务器返回的 AI 历史记录（已按 conv_id 分组）"""
+        conversations = msg.get("conversations", [])
+        if not conversations:
+            return
+
+        self._conversations = []
+        for c in conversations:
+            conv_msgs = []
+            for r in c.get("messages", []):
+                role = "user" if r["sender_id"] == self.app.state.user_id else "ai"
+                ts = r.get("ts", 0)
+                ts_str = (datetime.fromtimestamp(ts).strftime("%H:%M")
+                          if ts else datetime.now().strftime("%H:%M"))
+                conv_msgs.append({
+                    "role": role,
+                    "content": r["content"],
+                    "ts": ts_str,
+                })
+
+            if conv_msgs:
+                first_ts = c["messages"][0].get("ts", 0)
+                date_str = (datetime.fromtimestamp(first_ts).strftime("%m/%d")
+                            if first_ts else datetime.now().strftime("%m/%d"))
+                self._conversations.append({
+                    "conv_id": c["conv_id"],
+                    "title": c.get("title", "新对话")[:24],
+                    "date": date_str,
+                    "messages": conv_msgs,
+                    "preview_count": len(conv_msgs),
+                })
+
+        # 显示最近一个对话
+        self._current_conv_idx = len(self._conversations) - 1
+        self._conv_id = self._conversations[self._current_conv_idx]["conv_id"]
+        self._messages = list(self._conversations[self._current_conv_idx]["messages"])
+        self._refresh_history()
+        self._refresh_messages()
+
     def _on_ai_answer(self, msg):
         if self._cancelled:
             return
@@ -844,7 +906,8 @@ class AIPanel(BasePanel):
 
             self._stream_full += delta
             if self._stream_bubble is not None:
-                self._stream_bubble.setText(self._stream_full)
+                # 流式过程中实时渲染 Markdown → HTML
+                self._stream_bubble.setText(self._md2html(self._stream_full))
                 self._scroll_to_bottom()
             return
 
@@ -853,9 +916,19 @@ class AIPanel(BasePanel):
             self._cancelled = False
             self._update_send_btn(sending=False)
 
+            # 回写 conv_id（如果客户端还没设，就用服务端返回的）
+            if msg.get("conv_id") and not self._conv_id:
+                self._conv_id = msg["conv_id"]
+
             ts_str = datetime.now().strftime("%H:%M")
             self._messages.append(
                 {"role": "ai", "content": self._stream_full, "ts": ts_str})
+
+            # 替换流式容器为完整解析版（含代码块样式）
+            if self._stream_container is not None:
+                parts = self._parse_answer(self._stream_full)
+                parsed_container = self._build_ai_answer_container(ts_str, parts)
+                self._replace_last_widget(parsed_container)
 
             self._stream_container = None
             self._stream_bubble = None
@@ -932,7 +1005,7 @@ class AIPanel(BasePanel):
         bt.setObjectName("AIBubbleText")
         bt.setWordWrap(True)
         bt.setMaximumWidth(1360)
-        bt.setTextFormat(Qt.PlainText)
+        bt.setTextFormat(Qt.RichText)
         bt.setStyleSheet(
             f"color:{C_DARK}; font-size:{FZ_BODY};"
             f"background:transparent; border:none;"
@@ -952,7 +1025,7 @@ class AIPanel(BasePanel):
 
         cl = QVBoxLayout(container)
         cl.setContentsMargins(0, 0, 0, 0)
-        cl.setSpacing(14)
+        cl.setSpacing(6)
 
         hr = QHBoxLayout()
         hr.setSpacing(20)
@@ -1001,10 +1074,25 @@ class AIPanel(BasePanel):
                     f"background:transparent; border:none;"
                 )
                 bbl.addWidget(bt)
-                cl.addWidget(bubble)
+                # 用水平 layout + stretch 约束气泡宽度，防止撑满整行
+                row = QHBoxLayout()
+                row.setContentsMargins(0, 0, 0, 0)
+                row.addWidget(bubble)
+                row.addStretch()
+                cl.addLayout(row)
             elif part["type"] == "code":
-                cl.addWidget(self._code_block(
+                code_row = QHBoxLayout()
+                code_row.setContentsMargins(0, 0, 0, 0)
+                code_row.addWidget(self._code_block(
                     part.get("language", ""), part["content"]))
+                code_row.addStretch()
+                cl.addLayout(code_row)
+            elif part["type"] == "math":
+                math_row = QHBoxLayout()
+                math_row.setContentsMargins(0, 0, 0, 0)
+                math_row.addWidget(self._math_block(part["content"]))
+                math_row.addStretch()
+                cl.addLayout(math_row)
 
         return container
 
@@ -1037,6 +1125,7 @@ class AIPanel(BasePanel):
 
         self._messages = list(target_conv["messages"])
         self._current_conv_idx = new_index
+        self._conv_id = target_conv.get("conv_id")
         self._refresh_history()
         self._refresh_messages()
 
@@ -1063,6 +1152,7 @@ class AIPanel(BasePanel):
         else:
             # 新记录，插入最前
             entry = {
+                "conv_id": self._conv_id,
                 "title": title,
                 "date": datetime.now().strftime("%m/%d"),
                 "messages": list(self._messages),
@@ -1080,6 +1170,7 @@ class AIPanel(BasePanel):
 
         self._messages = []
         self._current_conv_idx = -1
+        self._conv_id = int(time.time())  # 生成新 conv_id
         self._is_waiting = False
         self._cancelled = False
         self._refresh_messages()
@@ -1112,67 +1203,275 @@ class AIPanel(BasePanel):
     #  Markdown 解析
     # ═══════════════════════════════════════════════════
 
+    # ── 预编译的正则 ──
+    _RE_CODE_BLOCK = re.compile(r"```(\w*)\s*\n(.*?)```", re.DOTALL)
+
+    # 数学环境名（不含 * 后缀，下面会拼 \*? ）
+    _MATH_ENVS = (
+        "equation|align|aligned|gather|eqnarray|displaymath|"
+        "cases|array|split|multline|"
+        "pmatrix|bmatrix|vmatrix|Vmatrix|matrix|Bmatrix|"
+        "smallmatrix|subarray|gathered|alignedat"
+    )
+    # $$...$$ 或 \[...\] 或 \begin{env}...\end{env}
+    _RE_DISPLAY_MATH = re.compile(
+        r"(?:\$\$|\\\[|\\begin\{(" + _MATH_ENVS + r")(\*?)\})"
+        r"\s*\n?"
+        r"(.*?)"
+        r"(?:\$\$|\\\]|\\end\{\1\2\})",
+        re.DOTALL)
+
     def _parse_answer(self, text):
+        """将 AI 回答按 代码块 / LaTeX 数学块 拆分为片段"""
+        # 收集所有 match（代码块 + 数学块），按位置排序
+        matches = []
+        for m in self._RE_CODE_BLOCK.finditer(text):
+            matches.append((m.start(), m.end(), "code", m))
+        for m in self._RE_DISPLAY_MATH.finditer(text):
+            # 排除和代码块重叠的（$$ 可能在 ``` 内部）
+            if not any(c_start <= m.start() < c_end for c_start, c_end, _, _ in matches):
+                matches.append((m.start(), m.end(), "math", m))
+        matches.sort(key=lambda x: x[0])
+
         parts = []
-        pattern = r"```(\w*)\n(.*?)```"
         last = 0
-        for m in re.finditer(pattern, text, re.DOTALL):
-            before = text[last:m.start()].strip()
+        for start, end, kind, m in matches:
+            before = text[last:start].strip()
             if before:
                 parts.append(
                     {"type": "text", "content": self._md2html(before)})
-            parts.append(
-                {"type": "code", "language": m.group(1) or "",
-                 "content": m.group(2)})
-            last = m.end()
+            if kind == "code":
+                parts.append(
+                    {"type": "code", "language": m.group(1) or "",
+                     "content": m.group(2).rstrip()})
+            else:
+                content = m.group(3).strip()  # group 3 = (.*?) 数学内容
+                parts.append(
+                    {"type": "math", "content": content})
+            last = end
         remaining = text[last:].strip()
         if remaining:
             parts.append(
                 {"type": "text", "content": self._md2html(remaining)})
         if not parts:
-            parts.append({"type": "text", "content": text})
+            parts.append({"type": "text", "content": self._md2html(text)})
         return parts
 
     def _md2html(self, text):
-        """Markdown → HTML，支持标题/列表/引用/粗斜体/代码/链接/分割线"""
+        """Markdown → HTML，支持标题/列表/引用/粗斜体/删除线/代码/链接/表格/任务列表/分割线"""
+        text = text.strip()
+        if not text:
+            return ""
         text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         lines = text.split("\n")
         out = []
-        in_ul, in_ol, in_quote = False, False, False
+        in_ul, in_ol, in_quote, in_code_block = False, False, False, False
+        code_lang = ""
+        last_was_br = False  # 合并连续 <br>
+
+        # 块级元素样式（压缩 Qt RichText 默认边距）
+        P_STYLE   = "margin:0 0 4px 0;"
+        H1_STYLE  = "margin:12px 0 4px 0; font-size:28px; font-weight:800;"
+        H2_STYLE  = "margin:10px 0 3px 0; font-size:26px; font-weight:700;"
+        H3_STYLE  = "margin:8px 0 2px 0; font-size:24px; font-weight:700;"
+        H4_STYLE  = "margin:6px 0 2px 0; font-size:23px; font-weight:600;"
 
         i = 0
         while i < len(lines):
             line = lines[i]
 
-            # 空行 → 结束列表/引用
+            # ── 代码块（```fence```） ──
+            if line.strip().startswith("```"):
+                if not in_code_block:
+                    if in_ul: out.append("</ul>"); in_ul = False
+                    if in_ol: out.append("</ol>"); in_ol = False
+                    if in_quote: out.append("</blockquote>"); in_quote = False
+                    code_lang = line.strip()[3:].strip()
+                    in_code_block = True
+                    last_was_br = False
+                    out.append(
+                        '<pre style="background:#1E2A3A;color:#E2E8F0;'
+                        'border-radius:22px;border-top-left-radius:7px;'
+                        'padding:22px 24px;margin:8px 0;'
+                        'font-family:Consolas,monospace;font-size:18px;'
+                        'overflow-x:auto;line-height:1.75;">')
+                    if code_lang:
+                        out.append(
+                            f'<div style="color:#7C9EC8;font-size:15px;'
+                            f'font-weight:600;margin-bottom:12px;">'
+                            f'{code_lang}</div>')
+                    i += 1
+                    continue
+                else:
+                    out.append("</pre>")
+                    in_code_block = False
+                    code_lang = ""
+                    last_was_br = False
+                    i += 1
+                    continue
+
+            if in_code_block:
+                out.append(line + "\n")
+                i += 1
+                continue
+
+            # LaTeX display math：$$...$$ / \[...\] / \begin{env}...\end{env}
+            stripped = line.strip()
+            math_env_name = ""      # 若是 \begin{env} 则为 env 名
+            math_close_delim = ""   # 对应的闭合定界符
+            math_open_len = 0
+
+            if stripped.startswith('$$'):
+                math_close_delim = '$$'
+                math_open_len = 2
+            elif stripped.startswith('\\['):
+                math_close_delim = '\\]'
+                math_open_len = 2
+            else:
+                # 匹配 \begin{env} 或 \begin{env*}
+                m_begin = re.match(
+                    r"\\begin\{((?:equation|align|aligned|gather|eqnarray|displaymath|"
+                    r"cases|array|split|multline|"
+                    r"pmatrix|bmatrix|vmatrix|Vmatrix|matrix|Bmatrix|"
+                    r"smallmatrix|subarray|gathered|alignedat)\*?)\}(.*)",
+                    stripped)
+                if m_begin:
+                    math_env_name = m_begin.group(1)
+                    math_close_delim = '\\end{' + math_env_name + '}'
+                    # 单行 \begin{env} ... \end{env}
+                    rest = m_begin.group(2)
+                    if math_close_delim in rest:
+                        # 单行 math 块
+                        math_content = rest[:rest.rfind(math_close_delim)].strip()
+                        if in_ul: out.append('</ul>'); in_ul = False
+                        if in_ol: out.append('</ol>'); in_ol = False
+                        if in_quote: out.append('</blockquote>'); in_quote = False
+                        out.append(self._build_math_html(math_content))
+                        last_was_br = False
+                        i += 1
+                        continue
+
+            if math_close_delim:
+                # 单行闭合？
+                if math_env_name:
+                    # \begin{env} 单行已在上方处理，这里处理多行
+                    if in_ul: out.append('</ul>'); in_ul = False
+                    if in_ol: out.append('</ol>'); in_ol = False
+                    if in_quote: out.append('</blockquote>'); in_quote = False
+                    math_lines = []
+                    i += 1
+                    while i < len(lines):
+                        if lines[i].strip() == math_close_delim:
+                            break
+                        math_lines.append(lines[i])
+                        i += 1
+                    out.append(self._build_math_html('\n'.join(math_lines)))
+                    last_was_br = False
+                    i += 1
+                    continue
+                elif stripped.endswith(math_close_delim) and len(stripped) > math_open_len + len(math_close_delim):
+                    # 单行 $$...$$ 或 \[...\]
+                    if in_ul: out.append('</ul>'); in_ul = False
+                    if in_ol: out.append('</ol>'); in_ol = False
+                    if in_quote: out.append('</blockquote>'); in_quote = False
+                    math = stripped[math_open_len:-len(math_close_delim)].strip()
+                    out.append(self._build_math_html(math))
+                    last_was_br = False
+                    i += 1
+                    continue
+                else:
+                    # 多行 $$...$$ 或 \[...\]
+                    if in_ul: out.append('</ul>'); in_ul = False
+                    if in_ol: out.append('</ol>'); in_ol = False
+                    if in_quote: out.append('</blockquote>'); in_quote = False
+                    math_lines = []
+                    i += 1
+                    while i < len(lines):
+                        if lines[i].strip() == math_close_delim:
+                            break
+                        math_lines.append(lines[i])
+                        i += 1
+                    out.append(self._build_math_html('\n'.join(math_lines)))
+                    last_was_br = False
+                    i += 1
+                    continue
+
+            # ── 空行 → 结束列表/引用，最多保留一个 <br> ──
             if not line.strip():
                 if in_ul: out.append("</ul>"); in_ul = False
                 if in_ol: out.append("</ol>"); in_ol = False
                 if in_quote: out.append("</blockquote>"); in_quote = False
-                out.append("<br>"); i += 1; continue
+                if not last_was_br:
+                    out.append("<br>")
+                    last_was_br = True
+                i += 1; continue
+            last_was_br = False
 
-            # 引用
+            # ── 引用 ──
             if line.lstrip().startswith("> "):
                 if not in_quote:
                     out.append('<blockquote style="border-left:3px solid #7C5CFC; '
                                'margin:8px 0; padding:4px 12px; color:#555;">')
                     in_quote = True
-                out.append(f"<p>{self._inline_md(line.lstrip()[2:])}</p>")
+                content = line.lstrip()[2:]
+                while content.startswith("> "):
+                    content = content[2:]
+                out.append(f"<p style='{P_STYLE}'>{self._inline_md(content)}</p>")
                 i += 1; continue
-            elif in_quote:
+            elif in_quote and not line.lstrip().startswith(">"):
                 out.append("</blockquote>"); in_quote = False
 
-            # 标题
-            if line.startswith("### "): out.append(f"<h3>{self._inline_md(line[4:])}</h3>"); i += 1; continue
-            if line.startswith("## "):  out.append(f"<h2>{self._inline_md(line[3:])}</h2>"); i += 1; continue
-            if line.startswith("# "):   out.append(f"<h1>{self._inline_md(line[2:])}</h1>"); i += 1; continue
+            # ── 标题 ──
+            if line.startswith("#### "):
+                out.append(f"<h4 style='{H4_STYLE}'>{self._inline_md(line[5:])}</h4>"); i += 1; continue
+            if line.startswith("### "):
+                out.append(f"<h3 style='{H3_STYLE}'>{self._inline_md(line[4:])}</h3>"); i += 1; continue
+            if line.startswith("## "):
+                out.append(f"<h2 style='{H2_STYLE}'>{self._inline_md(line[3:])}</h2>"); i += 1; continue
+            if line.startswith("# "):
+                out.append(f"<h1 style='{H1_STYLE}'>{self._inline_md(line[2:])}</h1>"); i += 1; continue
 
-            # 分割线
-            if line.strip() in ("---", "***"):
+            # ── 分割线 ──
+            if line.strip() in ("---", "***", "___", "- - -", "* * *"):
                 out.append("<hr style='border:none;height:1px;background:#E5E5E5;margin:12px 0;'>")
                 i += 1; continue
 
-            # 有序列表
+            # ── 表格 ──
+            if "|" in line and i + 1 < len(lines) and "|" in lines[i + 1]:
+                table_lines = []
+                j = i
+                while j < len(lines) and "|" in lines[j] and lines[j].strip():
+                    stripped = lines[j].strip()
+                    if stripped.startswith("|") or " | " in stripped:
+                        table_lines.append(stripped)
+                    else:
+                        break
+                    j += 1
+                if len(table_lines) >= 2:
+                    if in_ul: out.append("</ul>"); in_ul = False
+                    if in_ol: out.append("</ol>"); in_ol = False
+                    if in_quote: out.append("</blockquote>"); in_quote = False
+                    out.append(self._build_table_html(table_lines))
+                    i = j
+                    continue
+
+            # ── 任务列表（- [ ] / - [x]） ──
+            m = re.match(r"^[-*]\s+\[([ xX])\]\s+(.+)", line)
+            if m:
+                if in_ol: out.append("</ol>"); in_ol = False
+                if not in_ul:
+                    out.append("<ul style='margin:4px 0;padding-left:24px;list-style:none;'>")
+                    in_ul = True
+                checked = m.group(1).lower() == "x"
+                icon = "☑" if checked else "☐"
+                color = "#22C55E" if checked else "#94A3B8"
+                out.append(
+                    f'<li style="margin:2px 0;">'
+                    f'<span style="color:{color};font-size:20px;margin-right:6px;">{icon}</span>'
+                    f'{self._inline_md(m.group(2))}</li>')
+                i += 1; continue
+
+            # ── 有序列表 ──
             m = re.match(r"^(\d+)\.\s+(.+)", line)
             if m:
                 if in_ul: out.append("</ul>"); in_ul = False
@@ -1180,37 +1479,370 @@ class AIPanel(BasePanel):
                 out.append(f"<li>{self._inline_md(m.group(2))}</li>")
                 i += 1; continue
 
-            # 无序列表
-            m = re.match(r"^[-*]\s+(.+)", line)
+            # ── 无序列表 ──
+            m = re.match(r"^[-*+]\s+(.+)", line)
             if m:
                 if in_ol: out.append("</ol>"); in_ol = False
                 if not in_ul: out.append("<ul style='margin:4px 0;padding-left:24px;'>"); in_ul = True
                 out.append(f"<li>{self._inline_md(m.group(1))}</li>")
                 i += 1; continue
 
-            # 结束列表
+            # ── 结束列表 ──
             if in_ul: out.append("</ul>"); in_ul = False
             if in_ol: out.append("</ol>"); in_ol = False
 
-            # 普通段落
-            out.append(f"<p>{self._inline_md(line)}</p>")
+            # ── 普通段落 ──
+            out.append(f"<p style='{P_STYLE}'>{self._inline_md(line)}</p>")
             i += 1
 
+        # 收尾未关闭的块
+        if in_code_block: out.append("</pre>")
         if in_ul: out.append("</ul>")
         if in_ol: out.append("</ol>")
         if in_quote: out.append("</blockquote>")
-        return "".join(out)
+
+        # 去尾部的 <br> 标签
+        result = "".join(out)
+        while result.endswith("<br>"):
+            result = result[:-4]
+        return result
+
+    def _build_table_html(self, lines):
+        """将 Markdown 表格行转为 HTML <table>"""
+        if len(lines) < 2:
+            return ""
+        rows = []
+        for line in lines:
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            rows.append(cells)
+
+        # 第一行是表头，第二行是分隔符
+        header = rows[0]
+        has_sep = len(rows) >= 2 and all(
+            re.match(r"^:?-{3,}:?$", c) for c in rows[1])
+        data_start = 2 if has_sep else 1
+
+        # 从分隔符提取对齐
+        aligns = ["left"] * len(header)
+        if has_sep:
+            for ci, sep in enumerate(rows[1]):
+                if ci >= len(aligns):
+                    break
+                if sep.startswith(":") and sep.endswith(":"):
+                    aligns[ci] = "center"
+                elif sep.endswith(":"):
+                    aligns[ci] = "right"
+                elif sep.startswith(":"):
+                    aligns[ci] = "left"
+
+        align_map = {"left": "left", "center": "center", "right": "right"}
+        html = ('<table style="border-collapse:collapse;width:100%;'
+                'margin:8px 0;font-size:20px;">')
+        html += "<thead><tr>"
+        for ci, cell in enumerate(header):
+            html += (f'<th style="border:1px solid #E5EAF3;padding:10px 16px;'
+                     f'background:#F1F5F9;text-align:{align_map[aligns[ci]]};'
+                     f'font-weight:700;color:#1E293B;">'
+                     f'{self._inline_md(cell)}</th>')
+        html += "</tr></thead><tbody>"
+        for row in rows[data_start:]:
+            html += "<tr>"
+            for ci, cell in enumerate(row):
+                al = align_map[aligns[ci]] if ci < len(aligns) else "left"
+                html += (f'<td style="border:1px solid #E5EAF3;padding:10px 16px;'
+                         f'text-align:{al};color:#334155;">'
+                         f'{self._inline_md(cell)}</td>')
+            html += "</tr>"
+        html += "</tbody></table>"
+        return html
+
+    # ── LaTeX → Unicode 符号表 ──────────────────────────────
+    _LATEX_SYMBOLS = {
+        # 希腊字母（小写）
+        r'\alpha': 'α', r'\beta': 'β', r'\gamma': 'γ', r'\delta': 'δ',
+        r'\epsilon': 'ε', r'\varepsilon': 'ε', r'\zeta': 'ζ', r'\eta': 'η',
+        r'\theta': 'θ', r'\vartheta': 'ϑ', r'\iota': 'ι', r'\kappa': 'κ',
+        r'\lambda': 'λ', r'\mu': 'μ', r'\nu': 'ν', r'\xi': 'ξ',
+        r'\omicron': 'ο', r'\pi': 'π', r'\varpi': 'ϖ', r'\rho': 'ρ',
+        r'\varrho': 'ϱ', r'\sigma': 'σ', r'\varsigma': 'ς', r'\tau': 'τ',
+        r'\upsilon': 'υ', r'\phi': 'φ', r'\varphi': 'ϕ', r'\chi': 'χ',
+        r'\psi': 'ψ', r'\omega': 'ω',
+        # 希腊字母（大写）
+        r'\Gamma': 'Γ', r'\Delta': 'Δ', r'\Theta': 'Θ', r'\Lambda': 'Λ',
+        r'\Xi': 'Ξ', r'\Pi': 'Π', r'\Sigma': 'Σ', r'\Upsilon': 'Υ',
+        r'\Phi': 'Φ', r'\Psi': 'Ψ', r'\Omega': 'Ω',
+        # 运算符
+        r'\pm': '±', r'\mp': '∓', r'\times': '×', r'\div': '÷',
+        r'\cdot': '·', r'\ast': '∗', r'\star': '⋆', r'\circ': '∘',
+        r'\bullet': '•', r'\oplus': '⊕', r'\ominus': '⊖', r'\otimes': '⊗',
+        r'\oslash': '⊘', r'\odot': '⊙',
+        # 关系符号
+        r'\leq': '≤', r'\geq': '≥', r'\neq': '≠', r'\approx': '≈',
+        r'\equiv': '≡', r'\sim': '∼', r'\simeq': '≃', r'\propto': '∝',
+        r'\ll': '≪', r'\gg': '≫', r'\doteq': '≐', r'\prec': '≺',
+        r'\succ': '≻', r'\preceq': '≼', r'\succeq': '≽', r'\subset': '⊂',
+        r'\supset': '⊃', r'\subseteq': '⊆', r'\supseteq': '⊇',
+        r'\in': '∈', r'\notin': '∉', r'\ni': '∋', r'\exists': '∃',
+        r'\forall': '∀', r'\emptyset': '∅', r'\varnothing': '∅',
+        # 箭头
+        r'\rightarrow': '→', r'\to': '→', r'\leftarrow': '←',
+        r'\Rightarrow': '⇒', r'\Leftarrow': '⇐', r'\leftrightarrow': '↔',
+        r'\Leftrightarrow': '⇔', r'\mapsto': '↦', r'\longmapsto': '⟼',
+        r'\longrightarrow': '⟶', r'\longleftarrow': '⟵',
+        r'\uparrow': '↑', r'\downarrow': '↓', r'\updownarrow': '↕',
+        r'\nearrow': '↗', r'\searrow': '↘', r'\swarrow': '↙',
+        r'\nwarrow': '↖',
+        # 大型运算符
+        r'\sum': '∑', r'\prod': '∏', r'\coprod': '∐', r'\int': '∫',
+        r'\iint': '∬', r'\iiint': '∭', r'\oint': '∮', r'\bigcup': '⋃',
+        r'\bigcap': '⋂', r'\bigvee': '⋁', r'\bigwedge': '⋀',
+        # 特殊符号
+        r'\infty': '∞', r'\partial': '∂', r'\nabla': '∇',
+        r'\aleph': 'ℵ', r'\hbar': 'ℏ', r'\ell': 'ℓ', r'\wp': '℘',
+        r'\Re': 'ℜ', r'\Im': 'ℑ', r'\angle': '∠', r'\triangle': '△',
+        r'\square': '□', r'\diamond': '◇',
+        r'\ldots': '…', r'\cdots': '⋯', r'\vdots': '⋮', r'\ddots': '⋱',
+        r'\perp': '⊥', r'\parallel': '∥',
+        # 集合
+        r'\cap': '∩', r'\cup': '∪', r'\setminus': '∖',
+        # 逻辑
+        r'\land': '∧', r'\lor': '∨', r'\lnot': '¬', r'\neg': '¬',
+        r'\top': '⊤', r'\bot': '⊥',
+        # 微积分
+        r'\lim': 'lim', r'\log': 'log', r'\ln': 'ln', r'\exp': 'exp',
+        r'\sin': 'sin', r'\cos': 'cos', r'\tan': 'tan', r'\cot': 'cot',
+        r'\sec': 'sec', r'\csc': 'csc', r'\arcsin': 'arcsin',
+        r'\arccos': 'arccos', r'\arctan': 'arctan', r'\sinh': 'sinh',
+        r'\cosh': 'cosh', r'\tanh': 'tanh', r'\max': 'max', r'\min': 'min',
+        r'\sup': 'sup', r'\inf': 'inf', r'\det': 'det', r'\gcd': 'gcd',
+        r'\dim': 'dim', r'\hom': 'hom', r'\ker': 'ker',
+        # 上下标（Unicode 用于单字符 fallback）
+        r'\prime': '′', r'\primeprime': '″',
+        # 括号修饰
+        r'\bigl': '', r'\bigr': '', r'\Bigl': '', r'\Bigr': '',
+        r'\biggl': '', r'\biggr': '', r'\Biggl': '', r'\Biggr': '',
+        r'\big': '', r'\Big': '', r'\bigg': '', r'\Bigg': '',
+        # 空格
+        r'\;': ' ', r'\:': ' ', r'\,': '', r'\!': '',
+        r'\qquad': '  ', r'\quad': ' ',
+        # 换行
+        r'\\': '<br>',
+        # 样式
+        r'\text': '', r'\mathbf': '', r'\mathrm': '', r'\mathit': '',
+        r'\mathsf': '', r'\mathtt': '', r'\mathcal': '', r'\mathbb': '',
+        r'\boldsymbol': '', r'\mathfrak': '', r'\mathscr': '',
+        r'\operatorname': '', r'\widehat': '', r'\widetilde': '',
+        r'\overline': '', r'\underline': '', r'\overbrace': '', r'\underbrace': '',
+        r'\boxed': '', r'\not': '̸',  # combining long solidus overlay
+    }
+
+    def _render_latex(self, text):
+        """将 LaTeX 数学公式转为 HTML（支持希腊字母、符号、上下标、分式、根号等）
+
+        注意：调用方需确保输入已做 HTML 转义（&lt; &amp; &gt;），
+        若调用自 _inline_md 则已由 _md2html 转义；
+        若调用自 _build_math_html / _math_block 则需先转义。
+        """
+        if not text or not text.strip():
+            return text
+
+        result = text
+
+        # ── 1. \text{...} → 纯文本 ──
+        def _replace_text(m):
+            inner = m.group(1)
+            # 递归渲染 \text 内部（可能还有 $...$ 之类的）
+            return inner
+        result = re.sub(r'\\text\{(.+?)\}', _replace_text, result)
+
+        # ── 3. \frac{a}{b} → 分式 ──
+        def _replace_frac(m):
+            num = self._render_latex(m.group(1))
+            den = self._render_latex(m.group(2))
+            return (f'<span style="display:inline-block;vertical-align:middle;'
+                    f'text-align:center;">'
+                    f'<span style="display:block;border-bottom:1px solid #B45309;'
+                    f'padding:0 4px 2px 4px;margin-bottom:2px;">{num}</span>'
+                    f'<span style="display:block;padding:0 4px;">{den}</span>'
+                    f'</span>')
+        result = re.sub(r'\\frac\{(.+?)\}\{(.+?)\}', _replace_frac, result)
+
+        # ── 4. \sqrt[n]{x} 或 \sqrt{x} ──
+        def _replace_sqrt(m):
+            # m.lastindex=2 来自 \sqrt[n]{x}  (g1=n, g2=x)
+            # m.lastindex=1 来自 \sqrt{x}     (g1=x)
+            if m.lastindex and m.lastindex >= 2:
+                n = m.group(1)
+                inner = m.group(2)
+            else:
+                n = None
+                inner = m.group(1)
+            root_index = f'<sup style="font-size:16px;">{n}</sup>' if n else ''
+            return (f'<span style="display:inline-block;vertical-align:middle;">'
+                    f'{root_index}√<span style="text-decoration:overline;">'
+                    f'{inner}</span></span>')
+        result = re.sub(r'\\sqrt\[(.+?)\]\{(.+?)\}', _replace_sqrt, result)
+        result = re.sub(r'\\sqrt\{(.+?)\}', _replace_sqrt, result)
+
+        # ── 5. \left...\right...（去掉 \left/\right，保留括号） ──
+        result = re.sub(r'\\left\s*([()\[\]{}|.\\])', r'\1', result)
+        result = re.sub(r'\\right\s*([()\[\]{}|.\\])', r'\1', result)
+
+        # ── 6. 上下标 { } 组 ──
+        result = re.sub(r'\_\{(.+?)\}', r'<sub>\1</sub>', result)
+        result = re.sub(r'\^\{(.+?)\}', r'<sup>\1</sup>', result)
+        # 单 LaTeX 命令作上下标（如 ^\infty、_\alpha）
+        result = re.sub(r'(?<!\\)\^(\\(?:[a-zA-Z]+\*?))', r'<sup>\1</sup>', result)
+        result = re.sub(r'(?<!\\)\_(\\(?:[a-zA-Z]+\*?))', r'<sub>\1</sub>', result)
+        # 单字符上下标：排除 \ （避免吃掉命令前导 \），排除空格
+        result = re.sub(r'(?<!\\)\_([^\\\s])', r'<sub>\1</sub>', result)
+        result = re.sub(r'(?<!\\)\^([^\\\s])', r'<sup>\1</sup>', result)
+
+        # ── 7. \mathbb{X} / \mathcal{X} / \mathbf{X} 等带参样式命令 ──
+        # 只对单字符内容做 Unicode 映射，多字符则去掉外包装
+        def _replace_style(m):
+            cmd = m.group(1)
+            inner = m.group(2)
+            if len(inner) == 1:
+                # 尝试 Unicode 数学字母映射
+                c = inner
+                if cmd == 'mathbb':
+                    tbl = {'A':'𝔸','B':'𝔹','C':'ℂ','D':'𝔻','E':'𝔼','F':'𝔽','G':'𝔾',
+                           'H':'ℍ','I':'𝕀','J':'𝕁','K':'𝕂','L':'𝕃','M':'𝕄',
+                           'N':'ℕ','O':'𝕆','P':'ℙ','Q':'ℚ','R':'ℝ','S':'𝕊',
+                           'T':'𝕋','U':'𝕌','V':'𝕍','W':'𝕎','X':'𝕏','Y':'𝕐','Z':'ℤ',
+                           'a':'𝕒','b':'𝕓','c':'𝕔','d':'𝕕','e':'𝕖','f':'𝕗','g':'𝕘',
+                           'h':'𝕙','i':'𝕚','j':'𝕛','k':'𝕜','l':'𝕝','m':'𝕞',
+                           'n':'𝕟','o':'𝕠','p':'𝕡','q':'𝕢','r':'𝕣','s':'𝕤',
+                           't':'𝕥','u':'𝕦','v':'𝕧','w':'𝕨','x':'𝕩','y':'𝕪','z':'𝕫',
+                           '0':'𝟘','1':'𝟙','2':'𝟚','3':'𝟛','4':'𝟜',
+                           '5':'𝟝','6':'𝟞','7':'𝟟','8':'𝟠','9':'𝟡'}
+                    return tbl.get(c, c)
+                elif cmd == 'mathcal':
+                    tbl = {'A':'𝒜','B':'ℬ','C':'𝒞','D':'𝒟','E':'ℰ','F':'ℱ','G':'𝒢',
+                           'H':'ℋ','I':'ℐ','J':'𝒥','K':'𝒦','L':'ℒ','M':'ℳ',
+                           'N':'𝒩','O':'𝒪','P':'𝒫','Q':'𝒬','R':'ℛ','S':'𝒮',
+                           'T':'𝒯','U':'𝒰','V':'𝒱','W':'𝒲','X':'𝒳','Y':'𝒴','Z':'𝒵'}
+                    return tbl.get(c, c)
+                elif cmd in ('mathbf', 'mathrm', 'mathsf', 'mathtt'):
+                    return c
+                else:
+                    return c
+            else:
+                return inner
+        result = re.sub(
+            r'\\(mathbb|mathcal|mathbf|mathrm|mathsf|mathtt|mathit|'
+            r'mathfrak|mathscr|boldsymbol)\{(\S+?)\}',
+            _replace_style, result)
+
+        # ── 8. LaTeX 命令 → Unicode ──
+        # 按长度降序排列避免部分匹配（如 \varepsilon 优先于 \epsilon）
+        patterns = sorted(self._LATEX_SYMBOLS.keys(), key=len, reverse=True)
+        for pat in patterns:
+            val = self._LATEX_SYMBOLS[pat]
+            # 只替换独立的命令（前面不是字母）
+            result = re.sub(r'(?<!\w)' + re.escape(pat), val, result)
+
+        # ── 9. 算子名正体 + 大型运算符放大 ──
+        _OP_NAMES = (
+            r'sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|'
+            r'sinh|cosh|tanh|coth|'
+            r'ln|log|lg|exp|lim|max|min|sup|inf|det|gcd|dim|ker|hom|'
+            r'arg|deg|Pr|mod|bmod|pmod'
+        )
+        result = re.sub(
+            r'\b(' + _OP_NAMES + r')\b',
+            r'<span style="font-style:normal;font-weight:500;">\1</span>',
+            result)
+
+        # 大型运算符 Unicode 放大
+        _LARGE_OPS = '∑∏∐∫∬∭∮∲∳⋃⋂⋁⋀⨁⨂⨄⨅⨆⨈⨉⨊⨋⨌⨍⨎⨏⨐⨑⨒⨓⨔⨕⨖⨗⨘⨙⨚⨛⨜⨝⨞⨟⨠⨡⨢⨣⨤⨥⨦⨧⨨⨩⨪⨫⨬⨭⨮'
+        for ch in _LARGE_OPS:
+            if ch in result:
+                result = result.replace(
+                    ch, f'<span style="font-size:130%;">{ch}</span>')
+
+        # ── 10. 清理未配对的 { }（LaTeX 分组括号） ──
+        result = result.replace('{', '').replace('}', '')
+
+        return result
+
+    def _build_math_html(self, math_text):
+        """LaTeX 数学公式 → 居中显示的 HTML 块"""
+        escaped = math_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        rendered = self._render_latex(escaped)
+        return (
+            '<div style="background:#FFF8E1;border-left:4px solid #F59E0B;'
+            'border-radius:12px;padding:16px 24px;margin:8px 0;'
+            'font-family:Georgia,serif;font-size:22px;color:#92400E;'
+            'text-align:center;font-style:italic;">'
+            f'{rendered}'
+            '</div>'
+        )
+
+    def _math_block(self, math_text):
+        """数学公式块（原生 QFrame widget，用于 _build_ai_answer_container）"""
+        escaped = math_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        rendered = self._render_latex(escaped)
+        block = QFrame()
+        block.setObjectName("MathBlock")
+        block.setStyleSheet(f"""
+            QFrame#MathBlock {{
+                background:#FFF8E1;
+                border-left:4px solid #F59E0B;
+                border-radius:12px;
+                padding:16px 24px;
+            }}
+        """)
+        block.setMaximumWidth(1360)
+        bl = QVBoxLayout(block)
+        bl.setContentsMargins(0, 0, 0, 0)
+        lbl = QLabel(rendered)
+        lbl.setWordWrap(True)
+        lbl.setMaximumWidth(1300)
+        lbl.setAlignment(Qt.AlignCenter)
+        lbl.setTextFormat(Qt.RichText)
+        lbl.setStyleSheet(
+            "font-family:Georgia,serif; font-size:22px; "
+            "color:#92400E; "
+            "background:transparent; border:none;"
+        )
+        bl.addWidget(lbl)
+        return block
 
     def _inline_md(self, text):
-        """行内：粗体、斜体、代码、链接"""
+        """行内：粗体、斜体、删除线、代码、链接、图片、LaTeX 行内数学公式"""
+        _MATH_STYLE = (
+            'background:#FFF8E1;padding:2px 8px;border-radius:4px;'
+            'font-size:21px;color:#B45309;font-family:Georgia,serif;'
+        )
+        # 行内 LaTeX 数学公式：\(...\)（标准 LaTeX 语法）
+        text = re.sub(
+            r"\\\((.+?)\\\)",
+            lambda m: f'<code style="{_MATH_STYLE}">'
+                      f'{self._render_latex(m.group(1))}</code>', text)
+        # 行内 LaTeX 数学公式 $...$（先处理，避免和 $ 后续正则冲突）
+        text = re.sub(
+            r"(?<!\$)\$(?!\$)(.+?)(?<!\$)\$(?!\$)",
+            lambda m: f'<code style="{_MATH_STYLE}">'
+                      f'{self._render_latex(m.group(1))}</code>', text)
+        # 粗体（**text**）
         text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
-        text = re.sub(r"\*(.+?)\*", r"<i>\1</i>", text)
+        # 斜体（*text*），注意不要匹配 ** 内的内容
+        text = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"<i>\1</i>", text)
+        # 删除线（~~text~~）
+        text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
+        # 行内代码（`code`）
         text = re.sub(
             r"`([^`]+)`",
             r'<code style="background:#F1F5F9;padding:2px 8px;'
             r'border-radius:4px;font-size:22px;color:#5B21B6;">\1</code>', text)
+        # 链接 [text](url)
         text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)",
                       r'<a href="\2" style="color:#7C5CFC;">\1</a>', text)
+        # 图片 ![alt](url) → 显示为可点击链接
+        text = re.sub(r"!\[([^\]]*)\]\(([^)]+)\)",
+                      r'[📷 \1](\2)', text)
         return text
 
     # ═══════════════════════════════════════════════════
@@ -1224,6 +1856,21 @@ class AIPanel(BasePanel):
                 self._msg_layout.removeItem(last)
         self._msg_layout.addWidget(widget)
         self._msg_layout.addStretch()
+
+    def _replace_last_widget(self, new_widget):
+        """将消息区域最后一个 widget 替换为 new_widget"""
+        count = self._msg_layout.count()
+        if count < 2:
+            self._add_to_chat(new_widget)
+            return
+        # 倒数第二个是最后一个 widget（倒数第一个是 stretch）
+        stretch_idx = count - 1
+        widget_idx = count - 2
+        old_item = self._msg_layout.takeAt(widget_idx)
+        if old_item and old_item.widget():
+            old_item.widget().hide()
+            old_item.widget().deleteLater()
+        self._msg_layout.insertWidget(widget_idx, new_widget)
 
     def _clear_messages(self):
         # 先隐藏 _empty_hint 并从布局中移除，防止被 deleteLater 删掉
@@ -1255,7 +1902,9 @@ class AIPanel(BasePanel):
             if m["role"] == "user":
                 w = self._user_bubble(m["content"], m["ts"])
             else:
-                w = self._ai_bubble(m["content"], m["ts"])
+                # AI 消息：先用 _parse_answer 拆分代码块，再渲染
+                parts = self._parse_answer(m["content"])
+                w = self._build_ai_answer_container(m["ts"], parts)
             self._msg_layout.addWidget(w)
         self._msg_layout.addStretch()
         self._scroll_to_bottom()

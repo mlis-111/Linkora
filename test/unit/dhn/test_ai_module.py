@@ -44,7 +44,12 @@ def mock_ctx():
     ctx.config.AI_USER_ID = 1
 
     # mock 数据库
-    ctx.db.messages.insert = Mock(return_value=100)
+    ctx.db.ai_msg = Mock()
+    ctx.db.ai_msg.insert = Mock(return_value=100)
+    ctx.db.ai_msg.query_by_conv = Mock(return_value=[])
+    ctx.db.ai_msg.list_conv_ids = Mock(return_value=[])
+    # 老方式 query_p2p 仍保留（用在 message DAO 上）
+    ctx.db.messages = Mock()
     ctx.db.messages.query_p2p = Mock(return_value=[])
 
     # mock 线程池：同步执行提交的任务（方便测试）
@@ -156,8 +161,8 @@ class TestDoAskNormalFlow:
         _do_ask(mock_session, msg)
 
         ctx = mock_session.ctx
-        ctx.db.messages.insert.assert_any_call(
-            1, 42, 1, None, "AES 怎么实现？"
+        ctx.db.ai_msg.insert.assert_any_call(
+            1, 42, 1, "AES 怎么实现？", None
         )
 
     @patch("server.modules.ai.requests.post")
@@ -171,8 +176,8 @@ class TestDoAskNormalFlow:
         _do_ask(mock_session, msg)
 
         ctx = mock_session.ctx
-        ctx.db.messages.insert.assert_any_call(
-            1, 1, 42, None, "推荐使用 AES-256-CBC 模式"
+        ctx.db.ai_msg.insert.assert_any_call(
+            1, 1, 42, "推荐使用 AES-256-CBC 模式", None
         )
 
     @patch("server.modules.ai.requests.post")
@@ -327,8 +332,8 @@ class TestDoAskErrorHandling:
         msg = {"question": "测试问题", "ts": int(time.time())}
         _do_ask(mock_session, msg)
 
-        mock_session.ctx.db.messages.insert.assert_any_call(
-            1, 42, 1, None, "测试问题"
+        mock_session.ctx.db.ai_msg.insert.assert_any_call(
+            1, 42, 1, "测试问题", None
         )
 
     @patch("server.modules.ai.requests.post")

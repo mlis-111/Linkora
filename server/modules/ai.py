@@ -52,6 +52,7 @@ def register(router, ctx):
         ctx: ServerContext 实例
     """
     router.register(MT.AI_ASK, handle_ai_ask)
+    router.register(MT.AI_HISTORY_REQ, handle_ai_history)
 
 
 # ── 消息处理 ────────────────────────────────────────────
@@ -89,6 +90,7 @@ def _do_ask(session, msg):
     question = msg.get("question", "")
     user_id = session.user_id
     ai_user_id = ctx.config.AI_USER_ID
+    conv_id = msg.get("conv_id")  # 客户端传入的对话 ID
 
     if user_id is None:
         logging.error("AI模块：user_id 为 None，用户可能未登录")
@@ -99,17 +101,20 @@ def _do_ask(session, msg):
         })
         return
 
-    # 1) 入库提问（msg_type=1私聊, sender=用户, receiver=AI）
+    # 1) 入库提问（带 conv_id）
     try:
-        ctx.db.messages.insert(1, user_id, ai_user_id, None, question)
+        ctx.db.ai_msg.insert(1, user_id, ai_user_id, question, conv_id)
     except Exception:
         logging.exception("AI模块：提问入库失败")
 
-    # 2) 构建消息上下文
+    # 2) 构建消息上下文（用同一对话的历史，若有多轮则取同一 conv_id）
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     try:
-        history = ctx.db.messages.query_p2p(user_id, ai_user_id, limit=20)
+        if conv_id:
+            history = ctx.db.ai_msg.query_by_conv(conv_id)
+        else:
+            history = ctx.db.messages.query_p2p(user_id, ai_user_id, limit=20)
         for record in history:
             if record["sender_id"] == user_id:
                 messages.append({"role": "user", "content": record["content"]})
@@ -119,12 +124,24 @@ def _do_ask(session, msg):
         logging.exception("AI模块：查询历史失败")
 
     # 追加当前问题（含附件）
-    attachment_name = msg.get("attachment_name", "")
-    attachment_content = msg.get("attachment", "")
-    if attachment_name and attachment_content:
-        question = (f"用户上传了文件 '{attachment_name}'，内容如下：\n"
-                    f"```\n{attachment_content}\n```\n"
-                    f"用户问题：{question}")
+    attachments = msg.get("attachments", [])
+    # 兼容旧的单文件格式
+    if not attachments:
+        attachment_name = msg.get("attachment_name", "")
+        attachment_content = msg.get("attachment", "")
+        if attachment_name and attachment_content:
+            attachments = [{"name": attachment_name, "content": attachment_content}]
+    if attachments:
+        parts = []
+        for a in attachments:
+            name = a.get("name", "unknown")
+            content = a.get("content", "")
+            ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+            lang = ext if ext in ("py", "java", "c", "cpp", "js", "ts", "html",
+                                  "css", "json", "xml", "sql", "md", "txt", "csv",
+                                  "yaml", "yml", "sh", "bash", "go", "rs") else ""
+            parts.append(f"**文件: {name}**\n```{lang}\n{content}\n```")
+        question = "\n\n".join(parts) + "\n\n用户问题：" + question
     messages.append({"role": "user", "content": question})
 
     # 3) 调用 DeepSeek API（流式输出）
@@ -181,6 +198,7 @@ def _do_ask(session, msg):
             "answer": "",
             "chunk": False,
             "done": True,
+            "conv_id": conv_id,
             "ts": int(time.time()),
         })
 
@@ -196,6 +214,72 @@ def _do_ask(session, msg):
     # 4) 入库完整回答
     if full_answer:
         try:
-            ctx.db.messages.insert(1, ai_user_id, user_id, None, full_answer)
+            ctx.db.ai_msg.insert(1, ai_user_id, user_id, full_answer, conv_id)
         except Exception:
             logging.exception("AI模块：回答入库失败")
+
+
+def handle_ai_history(session, msg):
+    """查询用户与 AI 的历史对话（按 message.conv_id 分组）
+
+    Args:
+        session: Session 实例
+        msg: {type: "ai_history_req"}
+    """
+    ctx = session.ctx
+    user_id = session.user_id
+    ai_user_id = ctx.config.AI_USER_ID
+
+    if user_id is None:
+        session.send({"type": MT.ERROR, "code": "AI_ERROR", "message": "请先登录"})
+        return
+
+    try:
+        conv_ids = ctx.db.ai_msg.list_conv_ids(user_id)
+    except Exception:
+        logging.exception("AI模块：查询对话列表失败")
+        session.send({"type": MT.ERROR, "code": "AI_ERROR", "message": "历史记录查询失败"})
+        return
+
+    result = []
+    for cid in conv_ids:
+        try:
+            records = ctx.db.ai_msg.query_by_conv(cid)
+        except Exception:
+            logging.exception("AI模块：查询对话消息失败 conv_id=%s", cid)
+            continue
+
+        msgs = _build_msg_list(records)
+        if msgs:
+            result.append({
+                "conv_id": cid,
+                "title": _conv_title(msgs, user_id),
+                "messages": msgs,
+            })
+
+    session.send({
+        "type": MT.AI_HISTORY_RESP,
+        "conversations": result,
+    })
+
+
+# ── 辅助函数 ──
+
+def _build_msg_list(records):
+    """把数据库记录转为客户端消息格式"""
+    out = []
+    for r in records:
+        out.append({
+            "sender_id": r["sender_id"],
+            "content": r["content"],
+            "ts": int(r["sent_at"].timestamp()) if hasattr(r["sent_at"], "timestamp") else int(time.time()),
+        })
+    return out
+
+
+def _conv_title(msgs, user_id):
+    """取第一条用户消息作为对话标题"""
+    for m in msgs:
+        if m["sender_id"] == user_id:
+            return m["content"][:24]
+    return "新对话"

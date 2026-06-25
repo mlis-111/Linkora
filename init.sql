@@ -26,9 +26,11 @@ CREATE TABLE message (
     receiver_id INT COMMENT '私聊时有值',
     room_id INT COMMENT '群聊时有值',
     content TEXT NOT NULL COMMENT '存储明文',
+    conv_id BIGINT DEFAULT NULL COMMENT 'AI对话ID（非AI消息为NULL）',
     sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_p2p (sender_id, receiver_id, sent_at),
-    INDEX idx_room (room_id, sent_at)
+    INDEX idx_room (room_id, sent_at),
+    INDEX idx_conv (conv_id, sent_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 创建好友表

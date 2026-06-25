@@ -30,6 +30,8 @@ class MT:
     # AI
     AI_ASK = "ai_ask"
     AI_ANSWER = "ai_answer"
+    AI_HISTORY_REQ = "ai_history_req"
+    AI_HISTORY_RESP = "ai_history_resp"
 
     # 错误
     ERROR = "error"
