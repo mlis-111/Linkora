@@ -460,6 +460,9 @@ class AIMessageDAO(BaseDAO):
         return self._execute(
             "DELETE FROM message WHERE conv_id=%s",
             (conv_id,)
+        )
+
+
 class FriendRequestDAO(BaseDAO):
     """好友申请数据访问对象"""
 
