@@ -22,12 +22,6 @@ class MessageRouter:
         self._handlers[msg_type] = fn
 
     def dispatch(self, session, msg):
-        """分发消息到对应处理函数
-
-        Args:
-            session: Session实例
-            msg: 消息字典
-        """
         fn = self._handlers.get(msg.get("type"))
         if fn is None:
             session.send(error("UNKNOWN_TYPE", f"未知消息类型: {msg.get('type')}"))

@@ -4,7 +4,7 @@ from server.db.pool import DBPool
 from server.core.context import ServerContext
 from server.core.router import MessageRouter
 from server.core.server import ChatServer
-from server.modules import user, chat, friend, file, ai
+from server.modules import user, chat, friend, file, ai, group
 
 
 def build():
@@ -20,7 +20,7 @@ def build():
     router = MessageRouter()
 
     # 各模块自注册
-    for module in (user, chat, friend, file, ai):
+    for module in (user, chat, friend, file, ai, group):
         module.register(router, ctx)
 
     return ChatServer(ctx, router)
