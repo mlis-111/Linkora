@@ -190,6 +190,8 @@ class MainWindow(QMainWindow):
 
     def _on_user_list(self, msg):
         self.app.state.online_users = msg.get("online_users", [])
+        if msg.get("all_users"):
+            self.app.state.all_users = msg["all_users"]
 
     def _on_disconnected(self, msg):
         """服务器断开连接——自动清理 UI + 回登录界面"""
