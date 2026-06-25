@@ -77,3 +77,16 @@ class OnlineRegistry:
         for uid, h in targets:
             if uid != exclude:
                 h.send(msg)
+
+    def broadcast_to(self, msg, user_ids):
+        """广播消息给指定ID列表中的在线用户
+
+        Args:
+            msg: 消息字典
+            user_ids: 用户ID列表
+        """
+        with self._lock:
+            for uid in user_ids:
+                h = self._by_uid.get(uid)
+                if h:
+                    h.send(msg)

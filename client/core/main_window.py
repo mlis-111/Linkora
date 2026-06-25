@@ -13,7 +13,6 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self.app.net.on(MT.USER_LIST, self._on_user_list)
         self.app.net.on("__disconnected__", self._on_disconnected)
-        # self.showMaximized()  # 便于测试UI
 
     def _build_ui(self):
         """构建主界面UI"""
@@ -63,26 +62,10 @@ class MainWindow(QMainWindow):
 
         layout.addStretch()
 
-        # 底部设置和头像
-        settings_btn = QPushButton("⚙")
-        settings_btn.setFixedSize(76, 76)  # 增大尺寸
-        settings_btn.setStyleSheet("""
-            QPushButton {
-                border: none;
-                font-size: 40px;
-                color: #94A3B8;
-                background: transparent;
-                border-radius: 16px;
-            }
-            QPushButton:hover {
-                background: #F7F9FD;
-            }
-        """)
-        layout.addWidget(settings_btn, alignment=Qt.AlignHCenter)
-
-        avatar_btn = QPushButton("我")
-        avatar_btn.setFixedSize(67, 67)  # 增大头像
-        avatar_btn.setStyleSheet("""
+        # 底部头像
+        self._avatar_btn = QPushButton("我")
+        self._avatar_btn.setFixedSize(67, 67)
+        self._avatar_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #2D6CF6, stop:1 #1E4FD0);
@@ -93,7 +76,7 @@ class MainWindow(QMainWindow):
                 font-weight: 700;
             }
         """)
-        layout.addWidget(avatar_btn, alignment=Qt.AlignHCenter)
+        layout.addWidget(self._avatar_btn, alignment=Qt.AlignHCenter)
 
         return nav
 
@@ -201,7 +184,9 @@ class MainWindow(QMainWindow):
 
     def show_main(self):
         """登录成功后由login面板调用，接口与原方案一致"""
-        self.showMaximized()  # 登录成功后最大化显示
+        name = self.app.state.username or ""
+        self._avatar_btn.setText(name[0] if name else "我")
+        self.showMaximized()
 
     def _on_user_list(self, msg):
         self.app.state.online_users = msg.get("online_users", [])
