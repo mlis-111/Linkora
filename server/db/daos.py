@@ -234,3 +234,10 @@ class AIMessageDAO(BaseDAO):
             (user_id, user_id)
         )
         return [r["conv_id"] for r in rows]
+
+    def delete_by_conv(self, conv_id):
+        """删除指定 conv_id 的所有消息"""
+        return self._execute(
+            "DELETE FROM message WHERE conv_id=%s",
+            (conv_id,)
+        )

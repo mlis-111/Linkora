@@ -42,7 +42,7 @@ C_CODE_TEXT     = "#E2E8F0"
 # ── 字号 ─────────────────────────────────────────────
 FZ_SIDEBAR_TITLE = "40px"
 FZ_HEADER        = "30px"
-FZ_BODY          = "22px"
+FZ_BODY          = "24px"
 FZ_SUBTLE        = "20px"
 FZ_SMALL         = "20px"
 FZ_HISTORY_TITLE = "26px"
@@ -62,8 +62,10 @@ class AIPanel(BasePanel):
         self._cancelled = False
         self._history_loaded = False
         self._conv_id = int(time.time())  # 面板创建即生成 conv_id
+        self._attachments = []  # 多文件附件列表 [{"name":..., "content":...}, ...]
         self.app.net.on(MT.AI_ANSWER, self._on_ai_answer)
         self.app.net.on(MT.AI_HISTORY_RESP, self._on_ai_history)
+        self.app.net.on(MT.AI_HISTORY_DELETE_RESP, self._on_ai_history_deleted)
         self.app.net.on(MT.ERROR, self._on_server_error)
         self.app.net.on(MT.LOGIN_RESP, self._on_login_for_history)
         if self.app.state.user_id:
@@ -207,6 +209,11 @@ class AIPanel(BasePanel):
         return sidebar
 
     def _create_history_item(self, title_text, subtitle, index, active=False):
+        # 外层容器，用于叠加删除按钮
+        wrapper = QWidget()
+        wrapper.setStyleSheet("background:transparent;")
+
+        # ── 历史条目主体（与原设计一致，不嵌入删除按钮） ──
         item = QFrame()
         item.setObjectName("HistoryItem")
         item.setProperty("conv_index", index)
@@ -249,7 +256,38 @@ class AIPanel(BasePanel):
             f"background:transparent; border:none;"
         )
         il.addWidget(sl)
-        return item
+
+        # ── 外层容器布局：item 填满 ──
+        wl = QVBoxLayout(wrapper)
+        wl.setContentsMargins(0, 0, 0, 0)
+        wl.addWidget(item)
+
+        # ── 删除按钮：独立于 item，绝对定位在 wrapper 右上角 ──
+        del_btn = QPushButton("✕")
+        del_btn.setParent(wrapper)
+        del_btn.setFixedSize(48, 48)
+        del_btn.setCursor(Qt.PointingHandCursor)
+        del_btn.setToolTip("删除对话")
+        del_btn.setStyleSheet(f"""
+            QPushButton {{
+                background:{C_PURPLE_LT if active else 'rgba(148,163,184,0.12)'};
+                color:{C_PURPLE if active else C_SUBTLE};
+                border:none; font-size:20px; border-radius:10px;
+            }}
+            QPushButton:hover {{
+                background:#FEE2E2; color:#EF4444;
+            }}
+        """)
+        del_btn.clicked.connect(lambda _, idx=index: self._on_delete_conv(idx))
+        del_btn.move(wrapper.width() - 85, 29)
+        del_btn.show()
+
+        # 随 wrapper 尺寸变化重新定位按钮
+        def _reposition():
+            del_btn.move(wrapper.width() - 85, 29)
+        wrapper.resizeEvent = lambda e: _reposition()
+
+        return wrapper
 
     # ═══════════════════════════════════════════════════
     #  聊天头部
@@ -461,6 +499,16 @@ class AIPanel(BasePanel):
         self._attach_label.hide()
         cl.addWidget(self._attach_label)
 
+        # 多文件附件芯片区域
+        self._attach_chips = QWidget()
+        self._attach_chips.setStyleSheet("background:transparent;")
+        self._attach_chips_layout = QHBoxLayout(self._attach_chips)
+        self._attach_chips_layout.setContentsMargins(0, 0, 0, 0)
+        self._attach_chips_layout.setSpacing(10)
+        self._attach_chips_layout.setAlignment(Qt.AlignLeft)
+        self._attach_chips.hide()
+        cl.addWidget(self._attach_chips)
+
         self._send_btn = QPushButton("➤")
         self._send_btn.setFixedSize(64, 64)
         self._send_btn.setCursor(Qt.PointingHandCursor)
@@ -507,7 +555,7 @@ class AIPanel(BasePanel):
                     stop:0 {C_BLUE}, stop:1 {C_BLUE_DK});
                 border-radius:26px;
                 border-top-right-radius:7px;
-                padding:22px 28px;
+                padding:24px 30px;
             }}
         """)
 
@@ -582,7 +630,7 @@ class AIPanel(BasePanel):
                 background:{C_WHITE};
                 border-radius:26px;
                 border-top-left-radius:7px;
-                padding:22px 28px;
+                padding:34px 42px;
             }}
         """)
 
@@ -596,6 +644,7 @@ class AIPanel(BasePanel):
         bubble_text.setTextFormat(Qt.RichText)
         bubble_text.setStyleSheet(
             f"color:{C_DARK}; font-size:{FZ_BODY}; "
+            f"line-height:1.8; "
             f"background:transparent; border:none;"
         )
         bbl.addWidget(bubble_text)
@@ -733,46 +782,108 @@ class AIPanel(BasePanel):
         self._refresh_history()
 
     def _pick_attachment(self):
-        """选择附件文件（排除图片/视频/PPT/音乐）"""
+        """选择附件文件（排除图片/视频/PPT/音乐，最多 20 个）"""
         import os
-        path, _ = QFileDialog.getOpenFileName(
-            self, "选择附件", "",
-            "文档/代码 (*.txt *.md *.py *.java *.c *.cpp *.js *.ts *.html *.css "
-            "*.json *.xml *.csv *.log *.sql *.docx *.pdf *.xlsx);;所有文件 (*)")
-        if not path:
-            return
-        name = os.path.basename(path)
-        ext = os.path.splitext(name)[1].lower()
-        blacklist = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
-                     '.mp4', '.avi', '.mov', '.mkv', '.mp3', '.wav', '.flac',
-                     '.ppt', '.pptx', '.zip', '.rar', '.7z', '.exe'}
-        if ext in blacklist:
-            self._attach_label.setText(f"❌ 不支持的文件类型: {ext}")
+        max_files = 20
+        if len(self._attachments) >= max_files:
+            self._attach_label.setText(f"⚠ 最多附加 {max_files} 个文件")
             self._attach_label.setStyleSheet(
                 f"font-size:{FZ_SMALL}; color:#FB7185; background:transparent; padding:4px 20px;")
             self._attach_label.show()
             return
-        try:
-            with open(path, 'r', encoding='utf-8', errors='replace') as f:
-                content = f.read()
-        except Exception:
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, f"选择附件（最多 {max_files} 个）", "",
+            "文档/代码 (*.txt *.md *.py *.java *.c *.cpp *.js *.ts *.html *.css "
+            "*.json *.xml *.csv *.log *.sql *.docx *.pdf *.xlsx);;所有文件 (*)")
+        if not paths:
+            return
+        blacklist = {'.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp',
+                     '.mp4', '.avi', '.mov', '.mkv', '.mp3', '.wav', '.flac',
+                     '.ppt', '.pptx', '.zip', '.rar', '.7z', '.exe'}
+        self._attach_label.hide()
+        added = 0
+        for path in paths:
+            if len(self._attachments) >= max_files:
+                break
+            name = os.path.basename(path)
+            ext = os.path.splitext(name)[1].lower()
+            if ext in blacklist:
+                continue
+            # 去重：同名文件只保留一个
+            if any(a["name"] == name for a in self._attachments):
+                continue
             try:
-                with open(path, 'r', encoding='latin-1', errors='replace') as f:
+                with open(path, 'r', encoding='utf-8', errors='replace') as f:
                     content = f.read()
             except Exception:
-                self._attach_label.setText("❌ 无法读取此文件")
+                try:
+                    with open(path, 'r', encoding='latin-1', errors='replace') as f:
+                        content = f.read()
+                except Exception:
+                    continue
+            if len(content) > 8000:
+                content = content[:8000] + "\n...(内容已截断)"
+            self._attachments.append({"name": name, "content": content})
+            added += 1
+        if added == 0 and not self._attachments:
+            if any(os.path.splitext(os.path.basename(p))[1].lower() in blacklist for p in paths):
+                self._attach_label.setText("❌ 不支持的文件类型")
                 self._attach_label.setStyleSheet(
                     f"font-size:{FZ_SMALL}; color:#FB7185; background:transparent; padding:4px 20px;")
                 self._attach_label.show()
-                return
-        if len(content) > 8000:
-            content = content[:8000] + "\n...(内容已截断)"
-        self._attached_name = name
-        self._attached_content = content
-        self._attach_label.setText(f"📎 已附加: {name}")
-        self._attach_label.setStyleSheet(
-            f"font-size:{FZ_SMALL}; color:{C_PURPLE}; background:transparent; padding:4px 20px;")
-        self._attach_label.show()
+        self._refresh_attachment_chips()
+
+    def _remove_attachment(self, index):
+        """删除指定附件"""
+        if 0 <= index < len(self._attachments):
+            self._attachments.pop(index)
+        self._refresh_attachment_chips()
+
+    def _refresh_attachment_chips(self):
+        """重建附件芯片区域"""
+        # 清空现有芯片
+        while self._attach_chips_layout.count():
+            item = self._attach_chips_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not self._attachments:
+            self._attach_chips.hide()
+            return
+        self._attach_chips.show()
+        for i, att in enumerate(self._attachments):
+            chip = QFrame()
+            chip.setObjectName("AttachChip")
+            chip.setStyleSheet(f"""
+                QFrame#AttachChip {{
+                    background:{C_PURPLE_LT};
+                    border-radius:12px;
+                    padding:4px 6px 4px 12px;
+                }}
+            """)
+            chl = QHBoxLayout(chip)
+            chl.setContentsMargins(0, 0, 0, 0)
+            chl.setSpacing(4)
+            name_lbl = QLabel(att["name"])
+            name_lbl.setStyleSheet(
+                f"font-size:{FZ_SMALL}; color:{C_PURPLE}; "
+                f"background:transparent; border:none;")
+            chl.addWidget(name_lbl)
+            del_btn = QPushButton("✕")
+            del_btn.setFixedSize(28, 28)
+            del_btn.setCursor(Qt.PointingHandCursor)
+            del_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background:transparent; color:{C_SUBTLE};
+                    border:none; font-size:16px; border-radius:8px;
+                }}
+                QPushButton:hover {{
+                    background:#DDD6FE; color:{C_PURPLE};
+                }}
+            """)
+            del_btn.clicked.connect(lambda _, idx=i: self._remove_attachment(idx))
+            chl.addWidget(del_btn)
+            self._attach_chips_layout.addWidget(chip)
+        self._attach_chips_layout.addStretch()
 
     def _on_send(self):
         text = self._input_field.text().strip()
@@ -817,13 +928,10 @@ class AIPanel(BasePanel):
 
         payload = {"type": MT.AI_ASK, "question": text, "ts": ts,
                    "conv_id": self._conv_id}
-        attached = getattr(self, '_attached_name', None)
-        if attached:
-            payload["attachment_name"] = self._attached_name
-            payload["attachment"] = self._attached_content
-            self._attached_name = None
-            self._attached_content = None
-            self._attach_label.hide()
+        if self._attachments:
+            payload["attachments"] = self._attachments
+            self._attachments = []
+            self._refresh_attachment_chips()
         self.net.send(payload)
 
     def _on_server_error(self, msg):
@@ -995,7 +1103,7 @@ class AIPanel(BasePanel):
                 background:{C_WHITE};
                 border-radius:26px;
                 border-top-left-radius:7px;
-                padding:22px 28px;
+                padding:34px 42px;
             }}
         """)
         bbl = QVBoxLayout(bubble)
@@ -1008,6 +1116,7 @@ class AIPanel(BasePanel):
         bt.setTextFormat(Qt.RichText)
         bt.setStyleSheet(
             f"color:{C_DARK}; font-size:{FZ_BODY};"
+            f"line-height:1.8;"
             f"background:transparent; border:none;"
         )
         bbl.addWidget(bt)
@@ -1023,12 +1132,10 @@ class AIPanel(BasePanel):
         container = QWidget()
         container.setStyleSheet("background:transparent;")
 
-        cl = QVBoxLayout(container)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.setSpacing(6)
-
-        hr = QHBoxLayout()
-        hr.setSpacing(20)
+        # 外层同 _build_streaming_container：头像 + 内容列 + 右侧 stretch
+        lo = QHBoxLayout(container)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(20)
 
         avatar = QLabel("✨")
         avatar.setFixedSize(60, 60)
@@ -1039,16 +1146,20 @@ class AIPanel(BasePanel):
             color:white; border-radius:30px;
             font-size:30px;
         """)
-        hr.addWidget(avatar, alignment=Qt.AlignTop)
+        lo.addWidget(avatar, alignment=Qt.AlignTop)
+
+        # 内容列
+        content_col = QWidget()
+        ccl = QVBoxLayout(content_col)
+        ccl.setContentsMargins(0, 0, 0, 0)
+        ccl.setSpacing(6)
 
         info = QLabel(f"AI 助手 · {ts_str}")
         info.setStyleSheet(
             f"font-size:{FZ_SMALL}; color:{C_SUBTLE};"
             f"background:transparent; border:none;"
         )
-        hr.addWidget(info)
-        hr.addStretch()
-        cl.addLayout(hr)
+        ccl.addWidget(info)
 
         for part in parts:
             if part["type"] == "text":
@@ -1059,7 +1170,7 @@ class AIPanel(BasePanel):
                         background:{C_WHITE};
                         border-radius:26px;
                         border-top-left-radius:7px;
-                        padding:22px 28px;
+                        padding:34px 42px;
                     }}
                 """)
                 bbl = QVBoxLayout(bubble)
@@ -1071,6 +1182,7 @@ class AIPanel(BasePanel):
                 bt.setTextFormat(Qt.RichText)
                 bt.setStyleSheet(
                     f"color:{C_DARK}; font-size:{FZ_BODY};"
+                    f"line-height:1.8;"
                     f"background:transparent; border:none;"
                 )
                 bbl.addWidget(bt)
@@ -1079,21 +1191,23 @@ class AIPanel(BasePanel):
                 row.setContentsMargins(0, 0, 0, 0)
                 row.addWidget(bubble)
                 row.addStretch()
-                cl.addLayout(row)
+                ccl.addLayout(row)
             elif part["type"] == "code":
                 code_row = QHBoxLayout()
                 code_row.setContentsMargins(0, 0, 0, 0)
                 code_row.addWidget(self._code_block(
                     part.get("language", ""), part["content"]))
                 code_row.addStretch()
-                cl.addLayout(code_row)
+                ccl.addLayout(code_row)
             elif part["type"] == "math":
                 math_row = QHBoxLayout()
                 math_row.setContentsMargins(0, 0, 0, 0)
                 math_row.addWidget(self._math_block(part["content"]))
                 math_row.addStretch()
-                cl.addLayout(math_row)
+                ccl.addLayout(math_row)
 
+        lo.addWidget(content_col)
+        lo.addStretch()
         return container
 
     def _send_quick(self, prompt_text):
@@ -1128,6 +1242,45 @@ class AIPanel(BasePanel):
         self._conv_id = target_conv.get("conv_id")
         self._refresh_history()
         self._refresh_messages()
+
+    def _on_delete_conv(self, index):
+        """点击删除按钮，删除该对话"""
+        if index < 0 or index >= len(self._conversations):
+            return
+        conv = self._conversations[index]
+        conv_id = conv.get("conv_id")
+        if not conv_id:
+            return
+        self.net.send({"type": MT.AI_HISTORY_DELETE, "conv_id": conv_id})
+
+    def _on_ai_history_deleted(self, msg):
+        """服务器确认删除后，从本地列表移除"""
+        conv_id = msg.get("conv_id")
+        if not conv_id:
+            return
+        # 从 _conversations 中移除
+        removed_idx = None
+        for i, c in enumerate(self._conversations):
+            if c.get("conv_id") == conv_id:
+                removed_idx = i
+                break
+        if removed_idx is not None:
+            self._conversations.pop(removed_idx)
+            # 如果删除的是当前对话，切到最近的对话或新建
+            if self._current_conv_idx == removed_idx:
+                if self._conversations:
+                    self._current_conv_idx = min(removed_idx, len(self._conversations) - 1)
+                    target = self._conversations[self._current_conv_idx]
+                    self._messages = list(target["messages"])
+                    self._conv_id = target.get("conv_id")
+                else:
+                    self._messages = []
+                    self._current_conv_idx = -1
+                    self._conv_id = int(time.time())
+            elif self._current_conv_idx > removed_idx:
+                self._current_conv_idx -= 1
+            self._refresh_history()
+            self._refresh_messages()
 
     def _save_current_conv(self):
         """把当前 _messages 保存到 _conversations 对应位置"""
@@ -1173,6 +1326,8 @@ class AIPanel(BasePanel):
         self._conv_id = int(time.time())  # 生成新 conv_id
         self._is_waiting = False
         self._cancelled = False
+        self._attachments = []
+        self._refresh_attachment_chips()
         self._refresh_messages()
 
     def _refresh_history(self):
@@ -1270,11 +1425,11 @@ class AIPanel(BasePanel):
         last_was_br = False  # 合并连续 <br>
 
         # 块级元素样式（压缩 Qt RichText 默认边距）
-        P_STYLE   = "margin:0 0 4px 0;"
-        H1_STYLE  = "margin:12px 0 4px 0; font-size:28px; font-weight:800;"
-        H2_STYLE  = "margin:10px 0 3px 0; font-size:26px; font-weight:700;"
-        H3_STYLE  = "margin:8px 0 2px 0; font-size:24px; font-weight:700;"
-        H4_STYLE  = "margin:6px 0 2px 0; font-size:23px; font-weight:600;"
+        P_STYLE   = "margin:0 0 6px 0; line-height:1.8;"
+        H1_STYLE  = "margin:12px 0 4px 0; font-size:28px; font-weight:800; line-height:1.5;"
+        H2_STYLE  = "margin:10px 0 3px 0; font-size:26px; font-weight:700; line-height:1.5;"
+        H3_STYLE  = "margin:8px 0 2px 0; font-size:24px; font-weight:700; line-height:1.5;"
+        H4_STYLE  = "margin:6px 0 2px 0; font-size:23px; font-weight:600; line-height:1.5;"
 
         i = 0
         while i < len(lines):
@@ -1411,7 +1566,8 @@ class AIPanel(BasePanel):
             if line.lstrip().startswith("> "):
                 if not in_quote:
                     out.append('<blockquote style="border-left:3px solid #7C5CFC; '
-                               'margin:8px 0; padding:4px 12px; color:#555;">')
+                               'margin:8px 0; padding:4px 12px; color:#555; '
+                               'line-height:1.8;">')
                     in_quote = True
                 content = line.lstrip()[2:]
                 while content.startswith("> "):
@@ -1460,13 +1616,13 @@ class AIPanel(BasePanel):
             if m:
                 if in_ol: out.append("</ol>"); in_ol = False
                 if not in_ul:
-                    out.append("<ul style='margin:4px 0;padding-left:24px;list-style:none;'>")
+                    out.append("<ul style='margin:4px 0;padding-left:24px;list-style:none;line-height:1.8;'>")
                     in_ul = True
                 checked = m.group(1).lower() == "x"
                 icon = "☑" if checked else "☐"
                 color = "#22C55E" if checked else "#94A3B8"
                 out.append(
-                    f'<li style="margin:2px 0;">'
+                    f'<li style="margin:2px 0;line-height:1.8;">'
                     f'<span style="color:{color};font-size:20px;margin-right:6px;">{icon}</span>'
                     f'{self._inline_md(m.group(2))}</li>')
                 i += 1; continue
@@ -1475,16 +1631,16 @@ class AIPanel(BasePanel):
             m = re.match(r"^(\d+)\.\s+(.+)", line)
             if m:
                 if in_ul: out.append("</ul>"); in_ul = False
-                if not in_ol: out.append("<ol style='margin:4px 0;padding-left:24px;'>"); in_ol = True
-                out.append(f"<li>{self._inline_md(m.group(2))}</li>")
+                if not in_ol: out.append("<ol style='margin:4px 0;padding-left:24px;line-height:1.8;'>"); in_ol = True
+                out.append(f"<li style='line-height:1.8;'>{self._inline_md(m.group(2))}</li>")
                 i += 1; continue
 
             # ── 无序列表 ──
             m = re.match(r"^[-*+]\s+(.+)", line)
             if m:
                 if in_ol: out.append("</ol>"); in_ol = False
-                if not in_ul: out.append("<ul style='margin:4px 0;padding-left:24px;'>"); in_ul = True
-                out.append(f"<li>{self._inline_md(m.group(1))}</li>")
+                if not in_ul: out.append("<ul style='margin:4px 0;padding-left:24px;line-height:1.8;'>"); in_ul = True
+                out.append(f"<li style='line-height:1.8;'>{self._inline_md(m.group(1))}</li>")
                 i += 1; continue
 
             # ── 结束列表 ──
@@ -1542,7 +1698,7 @@ class AIPanel(BasePanel):
         for ci, cell in enumerate(header):
             html += (f'<th style="border:1px solid #E5EAF3;padding:10px 16px;'
                      f'background:#F1F5F9;text-align:{align_map[aligns[ci]]};'
-                     f'font-weight:700;color:#1E293B;">'
+                     f'font-weight:700;color:#1E293B;line-height:1.6;">'
                      f'{self._inline_md(cell)}</th>')
         html += "</tr></thead><tbody>"
         for row in rows[data_start:]:
@@ -1550,7 +1706,7 @@ class AIPanel(BasePanel):
             for ci, cell in enumerate(row):
                 al = align_map[aligns[ci]] if ci < len(aligns) else "left"
                 html += (f'<td style="border:1px solid #E5EAF3;padding:10px 16px;'
-                         f'text-align:{al};color:#334155;">'
+                         f'text-align:{al};color:#334155;line-height:1.6;">'
                          f'{self._inline_md(cell)}</td>')
             html += "</tr>"
         html += "</tbody></table>"

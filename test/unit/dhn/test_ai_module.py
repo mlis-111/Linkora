@@ -48,6 +48,7 @@ def mock_ctx():
     ctx.db.ai_msg.insert = Mock(return_value=100)
     ctx.db.ai_msg.query_by_conv = Mock(return_value=[])
     ctx.db.ai_msg.list_conv_ids = Mock(return_value=[])
+    ctx.db.ai_msg.delete_by_conv = Mock(return_value=1)
     # 老方式 query_p2p 仍保留（用在 message DAO 上）
     ctx.db.messages = Mock()
     ctx.db.messages.query_p2p = Mock(return_value=[])
@@ -96,6 +97,8 @@ class TestRegistration:
         register(router, mock_ctx)
 
         assert MT.AI_ASK in router._handlers
+        assert MT.AI_HISTORY_REQ in router._handlers
+        assert MT.AI_HISTORY_DELETE in router._handlers
         assert MT.CHAT not in router._handlers
         assert MT.LOGIN not in router._handlers
 
@@ -364,6 +367,172 @@ class TestDoAskErrorHandling:
 
         msg = {"question": "测试", "ts": int(time.time())}
         _do_ask(mock_session, msg)
+
+        call_args = mock_session.send.call_args[0][0]
+        assert call_args["type"] == MT.ERROR
+
+
+# ==================== 附件处理测试 ====================
+
+class TestDoAskAttachments:
+    """测试 _do_ask 多文件附件处理"""
+
+    @patch("server.modules.ai.requests.post")
+    def test_single_attachment_legacy_format(self, mock_post, mock_session):
+        """单附件兼容：旧的 attachment_name/attachment 格式仍能工作"""
+        from server.modules.ai import _do_ask
+
+        mock_post.return_value = _make_stream_mock(["答案"])
+
+        msg = {
+            "question": "分析这个文件",
+            "ts": int(time.time()),
+            "attachment_name": "test.py",
+            "attachment": "print('hello')",
+        }
+        _do_ask(mock_session, msg)
+
+        messages = mock_post.call_args[1]["json"]["messages"]
+        user_msg = messages[-1]["content"]
+        assert "test.py" in user_msg
+        assert "print('hello')" in user_msg
+
+    @patch("server.modules.ai.requests.post")
+    def test_multiple_attachments(self, mock_post, mock_session):
+        """多附件：attachments 列表应全部包含在问题中"""
+        from server.modules.ai import _do_ask
+
+        mock_post.return_value = _make_stream_mock(["答案"])
+
+        msg = {
+            "question": "分析这些文件",
+            "ts": int(time.time()),
+            "attachments": [
+                {"name": "a.py", "content": "x=1"},
+                {"name": "b.md", "content": "# Hello"},
+            ],
+        }
+        _do_ask(mock_session, msg)
+
+        messages = mock_post.call_args[1]["json"]["messages"]
+        user_msg = messages[-1]["content"]
+        assert "a.py" in user_msg
+        assert "x=1" in user_msg
+        assert "b.md" in user_msg
+        assert "# Hello" in user_msg
+
+    @patch("server.modules.ai.requests.post")
+    def test_attachments_prefer_new_format(self, mock_post, mock_session):
+        """附件优先：有新格式 attachments 时忽略旧的单文件字段"""
+        from server.modules.ai import _do_ask
+
+        mock_post.return_value = _make_stream_mock(["答案"])
+
+        msg = {
+            "question": "分析文件",
+            "ts": int(time.time()),
+            "attachments": [{"name": "new.py", "content": "pass"}],
+            "attachment_name": "old.py",  # 应被忽略
+            "attachment": "old_content",
+        }
+        _do_ask(mock_session, msg)
+
+        messages = mock_post.call_args[1]["json"]["messages"]
+        user_msg = messages[-1]["content"]
+        assert "new.py" in user_msg
+        assert "old.py" not in user_msg
+
+    @patch("server.modules.ai.requests.post")
+    def test_no_attachments(self, mock_post, mock_session):
+        """无附件：问题内容不变"""
+        from server.modules.ai import _do_ask
+
+        mock_post.return_value = _make_stream_mock(["答案"])
+
+        msg = {"question": "纯文本问题", "ts": int(time.time())}
+        _do_ask(mock_session, msg)
+
+        messages = mock_post.call_args[1]["json"]["messages"]
+        user_msg = messages[-1]["content"]
+        assert user_msg == "纯文本问题"
+
+    @patch("server.modules.ai.requests.post")
+    def test_language_detection_for_code_blocks(self, mock_post, mock_session):
+        """语言检测：根据文件扩展名设置代码块语言"""
+        from server.modules.ai import _do_ask
+
+        mock_post.return_value = _make_stream_mock(["答案"])
+
+        msg = {
+            "question": "分析代码",
+            "ts": int(time.time()),
+            "attachments": [
+                {"name": "main.py", "content": "print(1)"},
+                {"name": "style.css", "content": "body{}"},
+                {"name": "readme.md", "content": "# hi"},
+                {"name": "data.txt", "content": "raw"},
+            ],
+        }
+        _do_ask(mock_session, msg)
+
+        messages = mock_post.call_args[1]["json"]["messages"]
+        user_msg = messages[-1]["content"]
+        # py → ```py, css → ```css, md → ```md, txt → ``` (no lang)
+        assert "```py" in user_msg
+        assert "```css" in user_msg
+        assert "```md" in user_msg
+
+
+# ==================== 删除历史对话测试 ====================
+
+class TestHandleAiHistoryDelete:
+    """测试 handle_ai_history_delete 删除对话"""
+
+    def test_delete_by_conv_id(self, mock_session):
+        """删除指定 conv_id 的对话消息"""
+        from server.modules.ai import handle_ai_history_delete
+        from common.messages import MT
+
+        msg = {"type": MT.AI_HISTORY_DELETE, "conv_id": 12345}
+        handle_ai_history_delete(mock_session, msg)
+
+        mock_session.ctx.db.ai_msg.delete_by_conv.assert_called_once_with(12345)
+        mock_session.send.assert_called_with({
+            "type": MT.AI_HISTORY_DELETE_RESP,
+            "conv_id": 12345,
+        })
+
+    def test_delete_requires_login(self, mock_session):
+        """未登录时删除应返回错误"""
+        from server.modules.ai import handle_ai_history_delete
+        from common.messages import MT
+
+        mock_session.user_id = None
+        msg = {"type": MT.AI_HISTORY_DELETE, "conv_id": 12345}
+        handle_ai_history_delete(mock_session, msg)
+
+        call_args = mock_session.send.call_args[0][0]
+        assert call_args["type"] == MT.ERROR
+
+    def test_delete_requires_conv_id(self, mock_session):
+        """缺少 conv_id 时删除应返回错误"""
+        from server.modules.ai import handle_ai_history_delete
+        from common.messages import MT
+
+        msg = {"type": MT.AI_HISTORY_DELETE}
+        handle_ai_history_delete(mock_session, msg)
+
+        call_args = mock_session.send.call_args[0][0]
+        assert call_args["type"] == MT.ERROR
+
+    def test_delete_handles_db_error(self, mock_session):
+        """数据库异常时删除应返回错误"""
+        from server.modules.ai import handle_ai_history_delete
+        from common.messages import MT
+
+        mock_session.ctx.db.ai_msg.delete_by_conv.side_effect = Exception("DB Error")
+        msg = {"type": MT.AI_HISTORY_DELETE, "conv_id": 12345}
+        handle_ai_history_delete(mock_session, msg)
 
         call_args = mock_session.send.call_args[0][0]
         assert call_args["type"] == MT.ERROR

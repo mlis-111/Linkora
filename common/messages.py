@@ -32,6 +32,8 @@ class MT:
     AI_ANSWER = "ai_answer"
     AI_HISTORY_REQ = "ai_history_req"
     AI_HISTORY_RESP = "ai_history_resp"
+    AI_HISTORY_DELETE = "ai_history_delete"
+    AI_HISTORY_DELETE_RESP = "ai_history_delete_resp"
 
     # 错误
     ERROR = "error"

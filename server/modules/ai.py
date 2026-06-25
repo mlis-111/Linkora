@@ -53,6 +53,7 @@ def register(router, ctx):
     """
     router.register(MT.AI_ASK, handle_ai_ask)
     router.register(MT.AI_HISTORY_REQ, handle_ai_history)
+    router.register(MT.AI_HISTORY_DELETE, handle_ai_history_delete)
 
 
 # ── 消息处理 ────────────────────────────────────────────
@@ -260,6 +261,38 @@ def handle_ai_history(session, msg):
     session.send({
         "type": MT.AI_HISTORY_RESP,
         "conversations": result,
+    })
+
+
+def handle_ai_history_delete(session, msg):
+    """删除指定 conv_id 的 AI 对话历史
+
+    Args:
+        session: Session 实例
+        msg: {type: "ai_history_delete", conv_id: int}
+    """
+    ctx = session.ctx
+    user_id = session.user_id
+    conv_id = msg.get("conv_id")
+
+    if user_id is None:
+        session.send({"type": MT.ERROR, "code": "AI_ERROR", "message": "请先登录"})
+        return
+
+    if not conv_id:
+        session.send({"type": MT.ERROR, "code": "AI_ERROR", "message": "缺少 conv_id"})
+        return
+
+    try:
+        ctx.db.ai_msg.delete_by_conv(conv_id)
+    except Exception:
+        logging.exception("AI模块：删除对话失败 conv_id=%s", conv_id)
+        session.send({"type": MT.ERROR, "code": "AI_ERROR", "message": "删除失败"})
+        return
+
+    session.send({
+        "type": MT.AI_HISTORY_DELETE_RESP,
+        "conv_id": conv_id,
     })
 
 
