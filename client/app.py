@@ -31,6 +31,52 @@ class ChatClient:
         ]:
             self.main.add_panel(key, cls(self.main, self))
 
+        # 全局样式
+        self.qt_app.setStyleSheet("""
+            QWidget#LeftSidebar  { background-color: #FFFFFF; }
+            QWidget#RightPanel   { background-color: #F4F6FA; }
+
+            QFrame#AIBubble {
+                background-color: #FFFFFF;
+                border: 1px solid #DDDDDD;
+                border-radius: 12px;
+                border-top-left-radius: 4px;
+                padding: 12px 16px;
+                font-size: 19px;
+            }
+            QLabel#AIBubbleText { font-size: 19px; color: #222222; }
+
+            QFrame#UserBubble {
+                background-color: #5971F2;
+                color: #FFFFFF;
+                border-radius: 12px;
+                border-top-right-radius: 4px;
+                padding: 12px 16px;
+            }
+            QLabel#UserBubbleText { font-size: 19px; color: #FFFFFF; }
+
+            QPushButton#RecommendBtn {
+                background-color: #FFFFFF;
+                border: 1px solid #E5E5E5;
+                border-radius: 16px;
+                padding: 6px 12px;
+                font-size: 17px;
+            }
+
+            QLineEdit#InputField {
+                font-size: 19px;
+                padding-left: 16px;
+                padding-right: 16px;
+                border-radius: 24px;
+            }
+
+            QWidget#HistoryItem {
+                margin: 4px 12px;
+                padding: 10px 14px;
+                border-radius: 8px;
+            }
+            QWidget#HistoryItem[selected=\"true\"] { background-color: #E6E6FA; }
+        """)
     def show_login(self):
         """回到登录界面（断线时调用）"""
         self.main.hide()

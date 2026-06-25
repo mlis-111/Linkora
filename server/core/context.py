@@ -1,4 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
+from server.db.daos import (UserDAO, MessageDAO, FriendDAO, FileDAO,
+                             AIMessageDAO)
 from server.db.daos import UserDAO, MessageDAO, FriendDAO, FileDAO, FriendRequestDAO, GroupDAO
 from server.core.online import OnlineRegistry
 
@@ -11,6 +13,7 @@ class _DB:
         self.messages = MessageDAO(pool)
         self.friends = FriendDAO(pool)
         self.files = FileDAO(pool)
+        self.ai_msg = AIMessageDAO(pool)
         self.friend_requests = FriendRequestDAO(pool)
         self.groups = GroupDAO(pool)
 

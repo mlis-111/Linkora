@@ -427,6 +427,39 @@ class FileDAO(BaseDAO):
         self._execute(sql, (status, file_id))
 
 
+class AIMessageDAO(BaseDAO):
+    """AI 对话消息 DAO —— 不影响 message 表原有操作，独立管理 AI 历史"""
+
+    def insert(self, msg_type, sender_id, receiver_id, content, conv_id):
+        """插入 AI 消息（带 conv_id）"""
+        return self._execute(
+            "INSERT INTO message(msg_type,sender_id,receiver_id,room_id,content,conv_id)"
+            " VALUES(%s,%s,%s,NULL,%s,%s)",
+            (msg_type, sender_id, receiver_id, content, conv_id)
+        )
+
+    def query_by_conv(self, conv_id):
+        """查询指定 conv_id 的所有消息"""
+        return self._query(
+            "SELECT * FROM message WHERE conv_id=%s ORDER BY sent_at ASC",
+            (conv_id,)
+        )
+
+    def list_conv_ids(self, user_id):
+        """列出用户所有 AI 对话 conv_id（按最近消息倒序）"""
+        rows = self._query(
+            "SELECT conv_id, MAX(sent_at) AS last_ts FROM message "
+            "WHERE conv_id IS NOT NULL AND (sender_id=%s OR receiver_id=%s) "
+            "GROUP BY conv_id ORDER BY last_ts DESC",
+            (user_id, user_id)
+        )
+        return [r["conv_id"] for r in rows]
+
+    def delete_by_conv(self, conv_id):
+        """删除指定 conv_id 的所有消息"""
+        return self._execute(
+            "DELETE FROM message WHERE conv_id=%s",
+            (conv_id,)
 class FriendRequestDAO(BaseDAO):
     """好友申请数据访问对象"""
 
