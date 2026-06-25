@@ -1,5 +1,6 @@
 import sys
 from PyQt5.QtWidgets import QApplication
+from PyQt5.QtGui import QIcon
 from client.config import HOST, PORT, AES_KEY
 from common.crypto import CryptoUtil
 from client.state import ClientState
@@ -15,6 +16,10 @@ from client.ui.ai_panel import AIPanel
 class ChatClient:
     def __init__(self):
         self.qt_app = QApplication(sys.argv)
+        self.qt_app.setApplicationName("Linkora")
+        self.qt_app.setApplicationDisplayName("Linkora")
+        # 任务栏图标保持原样
+        self.qt_app.setWindowIcon(QIcon("icon/logo.png"))
         self.crypto = CryptoUtil(AES_KEY)
         self.state  = ClientState()
         self.net    = NetworkClient(HOST, PORT)

@@ -12,7 +12,7 @@ from PyQt5.QtWidgets import (
     QFrame, QCheckBox, QDesktopWidget, QApplication
 )
 from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtGui import QPixmap, QPainter, QBrush
+from PyQt5.QtGui import QPixmap, QPainter, QBrush, QIcon
 from common.messages import MT
 from client.core.base_panel import BasePanel
 
@@ -27,6 +27,21 @@ class LoginWindow(BasePanel):
         self.net.on(MT.LOGIN_RESP, self._on_login_resp)
         self.net.on(MT.REGISTER_RESP, self._on_register_resp)
         self._mode = self.MODE_LOGIN
+        # 圆形窗口图标
+        icon = QIcon()
+        src = QPixmap("icon/logo.png")
+        for size in (16, 24, 32, 48, 64, 96, 128, 256):
+            pixmap = src.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            rounded = QPixmap(pixmap.size())
+            rounded.fill(Qt.transparent)
+            p = QPainter(rounded)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setBrush(QBrush(pixmap))
+            p.setPen(Qt.NoPen)
+            p.drawRoundedRect(pixmap.rect(), size / 2, size / 2)
+            p.end()
+            icon.addPixmap(rounded)
+        self.setWindowIcon(icon)
         self._build_ui()
         self._settings = QSettings("CampusIM", "login")
         self.login_username.textChanged.connect(self._on_username_changed)
@@ -209,7 +224,7 @@ class LoginWindow(BasePanel):
         logo = QLabel()
         logo.setAlignment(Qt.AlignCenter)
         logo.setFixedSize(180, 180)
-        logo.setPixmap(self._rounded_pixmap("icon/logo.png", 180, 50))
+        logo.setPixmap(self._rounded_pixmap("icon/logo.png", 180, 45))
         title_area.addWidget(logo, alignment=Qt.AlignCenter)
         title_area.addSpacing(36)
 
@@ -218,7 +233,7 @@ class LoginWindow(BasePanel):
         title.setStyleSheet("font-size: 44px; font-weight: 900; color: #1E293B;")
         title_area.addWidget(title)
 
-        subtitle = QLabel("使用校园账号登录校园通")
+        subtitle = QLabel("使用校园账号登录 Linkora")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet("font-size: 25px; color: #94A3B8; margin-bottom: 12px;")
         title_area.addWidget(subtitle)
@@ -325,7 +340,7 @@ class LoginWindow(BasePanel):
         logo = QLabel()
         logo.setAlignment(Qt.AlignCenter)
         logo.setFixedSize(180, 180)
-        logo.setPixmap(self._rounded_pixmap("icon/logo.png", 180, 50))
+        logo.setPixmap(self._rounded_pixmap("icon/logo.png", 180, 45))
         title_area.addWidget(logo, alignment=Qt.AlignCenter)
         title_area.addSpacing(36)
 
@@ -334,7 +349,7 @@ class LoginWindow(BasePanel):
         title.setStyleSheet("font-size: 44px; font-weight: 900; color: #1E293B;")
         title_area.addWidget(title)
 
-        subtitle = QLabel("加入你的校园通信团队")
+        subtitle = QLabel("加入你的 Linkora 通信团队")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setStyleSheet("font-size: 25px; color: #94A3B8;")
         title_area.addWidget(subtitle)

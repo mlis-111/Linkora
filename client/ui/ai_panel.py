@@ -935,6 +935,11 @@ class AIPanel(BasePanel):
         self.net.send(payload)
 
     def _on_server_error(self, msg):
+        # 只处理 AI 相关错误，忽略其他模块的 ERROR 消息
+        code = msg.get("code", "")
+        if code != "AI_ERROR":
+            return
+
         self._is_waiting = False
         self._cancelled = True
         self._update_send_btn(sending=False)

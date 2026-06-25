@@ -223,7 +223,7 @@ class TestDoAskNormalFlow:
         assert call_args[1]["json"]["stream"] is True
         messages = call_args[1]["json"]["messages"]
         assert messages[0]["role"] == "system"
-        assert "校园通" in messages[0]["content"]
+        assert "Linkora" in messages[0]["content"]
 
 
 # ==================== 条件覆盖 & 条件组合覆盖：多轮上下文 ====================

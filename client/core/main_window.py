@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
                              QLabel, QPushButton, QStackedWidget, QFrame)
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QBrush
 from common.messages import MT
 
 
@@ -8,7 +9,23 @@ class MainWindow(QMainWindow):
     def __init__(self, app):
         super().__init__()
         self.app = app
-        self.setWindowTitle("校园通 - 局域网即时通信")
+        self.setWindowTitle("Linkora")
+        # 圆形窗口图标
+        icon = QIcon()
+        src = QPixmap("icon/logo.png")
+        for size in (16, 24, 32, 48, 64, 96, 128, 256):
+            pixmap = src.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            rounded = QPixmap(pixmap.size())
+            rounded.fill(Qt.transparent)
+            p = QPainter(rounded)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setBrush(QBrush(pixmap))
+            p.setPen(Qt.NoPen)
+            r = size / 2
+            p.drawRoundedRect(pixmap.rect(), r, r)
+            p.end()
+            icon.addPixmap(rounded)
+        self.setWindowIcon(icon)
         self.setMinimumSize(1240, 800)
         self._build_ui()
         self.app.net.on(MT.USER_LIST, self._on_user_list)

@@ -12,10 +12,10 @@ from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QLineEdit, QScrollArea, QFrame, QWidget,
     QGraphicsDropShadowEffect, QMenu, QDialog,
-    QListWidget, QListWidgetItem, QMessageBox, QSizePolicy, QTextEdit,
+    QListWidget, QListWidgetItem, QMessageBox, QTextEdit,
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QPainter, QBrush, QPixmap
 from client.core.base_panel import BasePanel
 from common.messages import MT, PUBLIC_ROOM_ID
 
@@ -209,15 +209,42 @@ class ChatPanel(BasePanel):
         self._msg_scroll.setWidget(self._msg_w)
 
         # 初始欢迎界面
-        self._welcome = QLabel(
-            "<div style='text-align:center;'>"
-            "<div style='font-size:72px;margin-bottom:24px;'>💬</div>"
-            "<div style='font-size:32px;font-weight:700;color:#64748B;'>欢迎使用校园通</div>"
-            "<div style='font-size:22px;color:#94A3B8;margin-top:12px;'>选择一个联系人开始聊天</div>"
-            "</div>"
-        )
-        self._welcome.setAlignment(Qt.AlignCenter)
+        self._welcome = QWidget()
         self._welcome.setStyleSheet("background:transparent;")
+        wl = QVBoxLayout(self._welcome)
+        wl.setAlignment(Qt.AlignCenter)
+        wl.setSpacing(32)
+        # Logo
+        logo = QLabel()
+        logo.setAlignment(Qt.AlignCenter)
+        logo.setFixedSize(300, 300)
+        pixmap = QPixmap("icon/logo.png").scaled(
+            300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        rounded = QPixmap(pixmap.size())
+        rounded.fill(Qt.transparent)
+        p = QPainter(rounded)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setBrush(QBrush(pixmap))
+        p.setPen(Qt.NoPen)
+        p.drawRoundedRect(pixmap.rect(), 70, 70)
+        p.end()
+        logo.setPixmap(rounded)
+        wl.addWidget(logo, alignment=Qt.AlignCenter)
+        # 欢迎文字
+        title = QLabel("欢迎使用 Linkora")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet(
+            "font-size:38px; font-weight:700; color:#64748B;"
+            "line-height:1.5;"
+            "background:transparent; border:none;")
+        wl.addWidget(title)
+        subtitle = QLabel("选择一个联系人开始聊天")
+        subtitle.setAlignment(Qt.AlignCenter)
+        subtitle.setStyleSheet(
+            "font-size:26px; color:#94A3B8;"
+            "line-height:1.5;"
+            "background:transparent; border:none;")
+        wl.addWidget(subtitle)
         self._msg_l.addStretch()
         self._msg_l.addWidget(self._welcome)
         self._msg_l.addStretch()
@@ -1022,7 +1049,7 @@ class ChatPanel(BasePanel):
         if msg.get("ok"):
             self._current_target = None
             self._clear_messages()
-            self._set_chat_header("校园通", "")
+            self._set_chat_header("Linkora", "")
             self.net.send({"type": MT.FRIEND_LIST})
 
     def _on_user_list(self, msg):
@@ -1075,8 +1102,7 @@ class ChatPanel(BasePanel):
 
         bubble = QLabel(text)
         bubble.setWordWrap(True)
-        bubble.setMaximumWidth(1500)
-        bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        bubble.setMaximumWidth(1280 if is_self else 1360)
         bubble.setTextFormat(Qt.PlainText)
         if is_self:
             bubble.setStyleSheet(f"""
@@ -1088,7 +1114,16 @@ class ChatPanel(BasePanel):
                 QLabel{{background:{C_WHITE};color:{C_DARK};border:1px solid {C_BLUE_BG};
                 border-radius:22px;border-top-left-radius:6px;font-size:24px;padding:20px 27px;}}
             """)
-        col.addWidget(bubble)
+        # 用水平 layout + stretch 约束气泡宽度，与 AI 面板一致
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        if is_self:
+            row.addStretch()
+            row.addWidget(bubble)
+        else:
+            row.addWidget(bubble)
+            row.addStretch()
+        col.addLayout(row)
 
         lo.addWidget(col_w)
 
