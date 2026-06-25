@@ -26,6 +26,9 @@ class UserDAO(BaseDAO):
         """
         return self._query_one("SELECT * FROM user WHERE user_id=%s", (user_id,))
 
+    def get_by_nickname(self, nickname):
+        return self._query_one("SELECT * FROM user WHERE nickname=%s", (nickname,))
+
     def get_all_users(self):
         """获取所有用户列表
 
@@ -466,16 +469,22 @@ class FriendRequestDAO(BaseDAO):
         )
 
     def list_incoming(self, user_id):
-        """查询收到的申请（待处理 + 已拒绝，含申请人名称）
-
-        Returns:
-            list: 申请列表（含 status 和 reject_reason）
-        """
+        """查询收到的申请（含待处理、已同意、已拒绝）"""
         return self._query(
             "SELECT r.id, r.from_id, r.message, r.status, r.reject_reason, "
             "u.username, u.nickname "
             "FROM friend_request r JOIN user u ON u.user_id=r.from_id "
-            "WHERE r.to_id=%s AND r.status IN (0, 2) ORDER BY r.created_at DESC",
+            "WHERE r.to_id=%s ORDER BY r.created_at DESC",
+            (user_id,)
+        )
+
+    def list_outgoing(self, user_id):
+        """查询发出的申请（含目标用户名称）"""
+        return self._query(
+            "SELECT r.id, r.to_id AS target_id, r.message, r.status, r.reject_reason, "
+            "u.username, u.nickname "
+            "FROM friend_request r JOIN user u ON u.user_id=r.to_id "
+            "WHERE r.from_id=%s ORDER BY r.created_at DESC",
             (user_id,)
         )
 

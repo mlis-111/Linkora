@@ -85,39 +85,44 @@ def handle_friend_add(session, msg):
 
 
 def handle_user_search(session, msg):
-    """按用户ID搜索用户
+    """按用户ID、用户名或昵称搜索用户
 
     Args:
         session: Session 实例
-        msg: 消息字典，包含 target_id 字段
+        msg: 消息字典，包含 target_id 字段（可以是ID数字或用户名/昵称）
     """
     ctx = session.ctx
-    target_id = msg.get("target_id")
+    target_id = msg.get("target_id", "").strip()
 
     if not target_id:
-        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": "用户ID不能为空"})
+        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": "输入不能为空"})
         return
 
+    # 先尝试按 ID 搜索
     try:
-        target_id = int(target_id)
+        uid = int(target_id)
+        user = ctx.db.users.get_by_id(uid)
     except (ValueError, TypeError):
-        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": "用户ID格式错误"})
-        return
+        user = None
 
-    # 查找用户
-    user = ctx.db.users.get_by_id(target_id)
+    # ID 找不到则按用户名或昵称搜索
     if not user:
-        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": f"用户 {target_id} 不存在"})
+        user = ctx.db.users.get_by_username(target_id)
+    if not user:
+        user = ctx.db.users.get_by_nickname(target_id)
+
+    if not user:
+        session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": f"未找到用户: {target_id}"})
         return
 
     # 不能搜索自己
-    if target_id == session.user_id:
+    if user["user_id"] == session.user_id:
         session.send({"type": MT.USER_SEARCH_RESP, "ok": False, "reason": "不能添加自己为好友"})
         return
 
     # 检查是否已经是好友
     friends = ctx.db.friends.list_by_user(session.user_id)
-    is_friend = any(f["user_id"] == target_id for f in friends)
+    is_friend = any(f["user_id"] == user["user_id"] for f in friends)
 
     session.send({
         "type": MT.USER_SEARCH_RESP,
@@ -225,17 +230,20 @@ def handle_friend_reject(session, msg):
 
 
 def handle_friend_req_list(session, msg):
-    """查询待处理的好友申请
+    """查询好友申请（收到的 + 发出的）
 
     Args:
         session: Session 实例
         msg: 消息字典（无需额外参数）
     """
     ctx = session.ctx
-    requests = ctx.db.friend_requests.list_incoming(session.user_id)
+    uid = session.user_id
+    incoming = ctx.db.friend_requests.list_incoming(uid)
+    outgoing = ctx.db.friend_requests.list_outgoing(uid)
     session.send({
         "type": MT.FRIEND_REQ_LIST_RESP,
-        "requests": requests,
+        "incoming": incoming,
+        "outgoing": outgoing,
     })
 
 

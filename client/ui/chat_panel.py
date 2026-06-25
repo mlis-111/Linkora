@@ -2,7 +2,7 @@
 
 支持私聊和群聊，提供消息收发、历史记录查询功能。
 消息发送前自动加密，接收后自动解密显示。
-UI 对齐设计稿：蓝渐变主色、圆形头像、白底圆角气泡、卡片式输入区。
+UI 对齐文件面板：大字号、舒朗间距、蓝调阴影。
 
 author: 董钧豪
 """
@@ -10,1682 +10,1134 @@ author: 董钧豪
 import time
 from PyQt5.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QLineEdit, QScrollArea, QFrame, QWidget, QSizePolicy,
-    QMenu, QAction, QMessageBox, QDialog,
+    QLineEdit, QScrollArea, QFrame, QWidget,
+    QGraphicsDropShadowEffect, QMenu, QDialog,
+    QListWidget, QListWidgetItem, QMessageBox, QSizePolicy, QTextEdit,
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 from client.core.base_panel import BasePanel
 from common.messages import MT, PUBLIC_ROOM_ID
-from client.ui.group_settings_dialog import GroupSettingsDialog
 
+# ── 颜色 ─────────────────────────────────────────────
+C_DARK      = "#1E293B"
+C_SUBTLE    = "#94A3B8"
+C_MUTED     = "#6B7A90"
+C_WHITE     = "#FFFFFF"
+C_CARD      = "#FFFFFF"
+C_BG        = "#EEF2FA"
+C_SIDEBAR   = "#F7F9FD"
+C_BORDER    = "#E5EAF3"
+C_PRIMARY   = "#2D6CF6"
+C_BLUE_BG   = "#DBEAFE"
+C_BLUE_GRAD = "qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #4F8DFD,stop:1 #2D6CF6)"
+C_RED       = "#FB7185"
+C_GREEN     = "#34D399"
+C_OFFLINE   = "#CBD5E1"
 
-# 头像颜色池
 _AVATAR_COLORS = [
     "#6366F1", "#FB923C", "#F472B6", "#34D399",
     "#A78BFA", "#FB7185", "#38BDF8", "#FBBF24",
 ]
 
 
-class ChatPanel(BasePanel):
-    """聊天面板
+def _apply_shadow(widget, blur=12, y=3, alpha=15):
+    s = QGraphicsDropShadowEffect()
+    s.setBlurRadius(blur)
+    s.setXOffset(0)
+    s.setYOffset(y)
+    s.setColor(QColor(45, 108, 246, alpha))
+    widget.setGraphicsEffect(s)
 
-    左侧对话列表（公共聊天室 + 群聊 + 好友），
-    右侧聊天区域（消息显示 + 卡片式输入区），
-    私聊时右侧多一个信息面板。
-    """
+
+class ChatPanel(BasePanel):
+    """聊天面板"""
 
     def __init__(self, parent, app):
-        self._current_target = None  # {"id": ..., "name": ..., "type": "p2p"/"room"}
-        self._conv_items = {}        # key -> QFrame
-        self._unread_counts = {}     # key -> 未读消息数
-        self._last_msg_times = {}    # key -> 最近消息时间戳（用于排序）
-        self._last_msg_previews = {}  # key -> 最近消息预览文字
-        self._my_groups = []          # 我加入的群聊列表
-        self._available_groups = []   # 可加入的群聊列表
-        self._pending_join_dialog = False  # 用户点了"＋"但数据还没加载完
-        self._search_text = ""        # 搜索框文字，用于过滤对话列表
-        self._pending_members_group = None  # 等待成员列表响应的群ID
+        self._current_target = None
+        self._conv_items = {}
+        self._unread = {}
+        self._last_times = {}
+        self._last_previews = {}
+        self._my_groups = []
+        self._search_text = ""
+        self._history_token = 0
+        self._group_members_cache = {}
         super().__init__(parent, app)
 
     def subscribe(self):
-        """订阅聊天相关消息"""
         self.net.on(MT.CHAT, self._on_chat)
         self.net.on(MT.ROOM_CHAT, self._on_room_chat)
         self.net.on(MT.HISTORY_RESP, self._on_history)
         self.net.on(MT.USER_LIST, self._on_user_list)
         self.net.on(MT.FRIEND_LIST_RESP, self._on_friend_list)
         self.net.on(MT.GROUP_LIST_RESP, self._on_group_list)
+        self.net.on(MT.GROUP_CREATE_RESP, self._on_group_create_resp)
         self.net.on(MT.GROUP_JOIN_RESP, self._on_group_join)
-        self.net.on(MT.GROUP_NAME_UPDATED, self._on_group_name_updated)
-        self.net.on(MT.GROUP_MEMBERS_RESP, self._on_group_members_resp)
-        self.net.on(MT.GROUP_INVITE, self._on_invited_to_group)
+        self.net.on(MT.GROUP_NAME_UPDATED, self._on_group_name_update)
+        self.net.on(MT.GROUP_MEMBERS_RESP, self._on_group_members)
+        self.net.on(MT.GROUP_INVITE, self._on_group_invite)
         self.net.on(MT.FRIEND_REMOVE_RESP, self._on_friend_remove_resp)
         self._build_ui()
 
     def showEvent(self, event):
-        """面板显示时请求初始数据"""
         super().showEvent(event)
-        if self.state.user_id is not None and not self._my_groups:
+        # 已有数据则跳过，避免每次切面板都请求+重绘导致闪烁
+        if not self.state.friends and not self._my_groups:
+            self._request_lists()
+
+    def _request_lists(self):
+        if self.state.user_id:
             self.net.send({"type": MT.FRIEND_LIST})
             self.net.send({"type": MT.GROUP_LIST})
 
-    # ==================== 整体UI构建 ====================
+    # ═══════════════════════════════════════════════════
+    #  整体布局
+    # ═══════════════════════════════════════════════════
 
     def _build_ui(self):
-        """构建聊天界面：左侧对话列表 + 右侧聊天区域"""
-        self.setStyleSheet("background-color: #EEF2FA;")
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
+        self.setStyleSheet(f"background:{C_BG};")
+        main = QHBoxLayout(self)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.setSpacing(0)
 
-        # 左侧：对话列表
-        self._build_conversation_list()
-        main_layout.addWidget(self._conv_panel)
+        main.addWidget(self._build_left())
 
-        # 分割线
-        divider = QFrame()
-        divider.setFixedWidth(1)
-        divider.setStyleSheet("background-color: #E5EAF3;")
-        main_layout.addWidget(divider)
+        d = QFrame()
+        d.setFixedWidth(1)
+        d.setStyleSheet(f"background:{C_BORDER};")
+        main.addWidget(d)
 
-        # 中间：聊天区域
-        self._build_chat_area()
-        main_layout.addWidget(self._chat_panel, 1)
+        main.addWidget(self._build_right(), 1)
 
-        # 右侧：信息面板（私聊时显示）
-        self._build_info_panel()
-        self._info_panel.hide()  # 默认隐藏
-        main_layout.addWidget(self._info_panel)
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(200, self._request_lists)
 
-        # 默认选中在 _on_group_list 中处理（等待群聊列表返回）
+    # ═══════════════════════════════════════════════════
+    #  左侧对话列表
+    # ═══════════════════════════════════════════════════
 
-    # ==================== 圆形头像 ====================
+    def _build_left(self):
+        self._left = QFrame()
+        self._left.setFixedWidth(520)
+        self._left.setStyleSheet(f"background:{C_SIDEBAR};")
 
-    def _create_avatar(self, size, text, color, gradient=False):
-        """创建圆形头像
+        lo = QVBoxLayout(self._left)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(0)
 
-        Args:
-            size: 头像尺寸
-            text: 显示文字（首字）
-            color: 背景色
-            gradient: 是否使用蓝渐变
-
-        Returns:
-            QLabel: 圆形头像
-        """
-        avatar = QLabel(text)
-        avatar.setFixedSize(size, size)
-        avatar.setAlignment(Qt.AlignCenter)
-        avatar.setStyleSheet(f"""
-            font-size: {size // 2 - 2}px;
-            font-weight: 600;
-            color: white;
-            border-radius: {size // 2}px;
-            background: {'qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #4F8DFD, stop:1 #2D6CF6)' if gradient else color};
-        """)
-        return avatar
-
-    # ==================== 左侧：对话列表 ====================
-
-    def _build_conversation_list(self):
-        """构建对话列表（宽度 450px，对齐设计稿）"""
-        self._conv_panel = QFrame()
-        self._conv_panel.setFixedWidth(450)
-        self._conv_panel.setStyleSheet("background-color: #F7F9FD;")
-
-        layout = QVBoxLayout(self._conv_panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # 标题：消息
-        header = QFrame()
-        header.setFixedHeight(68)
-        hl = QHBoxLayout(header)
-        hl.setContentsMargins(20, 0, 20, 0)
-        title = QLabel("消息")
-        title.setStyleSheet("font-size: 28px; font-weight: 800; color: #1E293B;")
-        hl.addWidget(title)
-
-        self._total_unread_badge = QLabel("")
-        self._total_unread_badge.setStyleSheet("""
-            font-size: 24px; font-weight: 700; color: #EF4444;
-            background: #FEE2E2; padding: 2px 10px; border-radius: 10px;
-        """)
-        self._total_unread_badge.hide()
-        hl.addWidget(self._total_unread_badge)
-
+        # 标题 "消息" + 创建群聊按钮
+        hdr = QWidget()
+        hl = QHBoxLayout(hdr)
+        hl.setContentsMargins(48, 60, 28, 36)
+        hl.setSpacing(16)
+        t = QLabel("消息")
+        t.setStyleSheet(f"font-size:45px; font-weight:900; color:{C_DARK};")
+        hl.addWidget(t)
         hl.addStretch()
 
-        # 加入群聊按钮（＋图标）
-        join_btn = QPushButton("＋")
-        join_btn.setFixedSize(36, 36)
-        join_btn.setCursor(Qt.PointingHandCursor)
-        join_btn.setStyleSheet("""
-            QPushButton {
-                background: #E7EFFC; color: #2D6CF6;
-                border: none; border-radius: 12px; font-size: 26px; font-weight: 700;
-            }
-            QPushButton:hover { background: #D1E3FA; }
+        create = QPushButton("＋ 创建群聊")
+        create.setFixedHeight(52)
+        create.setCursor(Qt.PointingHandCursor)
+        create.setStyleSheet(f"""
+            QPushButton {{ background:{C_BLUE_BG}; color:{C_PRIMARY};
+            border:none; border-radius:14px; font-size:23px; font-weight:700;
+            padding:0 18px; }}
+            QPushButton:hover {{ background:#D1E3FA; }}
         """)
-        join_btn.clicked.connect(self._show_join_group_dialog)
-        hl.addWidget(join_btn)
+        create.clicked.connect(self._show_create_group_dialog)
+        hl.addWidget(create)
+        lo.addWidget(hdr)
 
-        layout.addWidget(header)
-
-        # 搜索框
-        self._search_box = QLineEdit()
-        self._search_box.setPlaceholderText("搜索用户或消息")
-        self._search_box.setFixedHeight(44)
-        self._search_box.setStyleSheet("""
-            QLineEdit {
-                background-color: #fff; border: none; border-radius: 14px;
-                font-size: 24px; color: #1E293B; padding: 0 15px;
-                margin: 0 20px 14px 20px;
-            }
-            QLineEdit::placeholder { color: #B0BAC8; }
+        # 搜索
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("搜索用户或消息")
+        self._search.setFixedHeight(100)
+        self._search.setStyleSheet(f"""
+            QLineEdit {{ background:{C_WHITE}; border:none; border-radius:20px;
+            font-size:24px; color:{C_DARK}; padding:0 22px;
+            margin:8px 28px 24px 28px; }}
+            QLineEdit::placeholder {{ color:#B0BAC8; }}
         """)
-        self._search_box.textChanged.connect(self._on_search_text_changed)
-        layout.addWidget(self._search_box)
+        self._search.textChanged.connect(lambda t: setattr(self, '_search_text', t.strip().lower()) or self._refresh_list())
+        lo.addWidget(self._search)
 
-        # 对话列表（可滚动）
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical { background: transparent; width: 6px; }
-            QScrollBar::handle:vertical { background: rgba(100,116,139,0.22); border-radius: 6px; }
-        """)
+        # 滚动列表
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        sc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        sc.setStyleSheet("QScrollArea{border:none;background:transparent;}"
+                         "QScrollBar:vertical{width:8px;background:transparent;}"
+                         "QScrollBar::handle:vertical{background:rgba(100,116,139,0.22);border-radius:6px;}"
+                         "QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical{height:0px;}")
+        self._conv_w = QWidget()
+        self._conv_l = QVBoxLayout(self._conv_w)
+        self._conv_l.setContentsMargins(28, 15, 28, 24)
+        self._conv_l.setSpacing(5)
+        self._conv_l.setAlignment(Qt.AlignTop)
+        sc.setWidget(self._conv_w)
+        lo.addWidget(sc, 1)
+        return self._left
 
-        self._conv_content = QWidget()
-        self._conv_layout = QVBoxLayout(self._conv_content)
-        self._conv_layout.setContentsMargins(12, 0, 12, 0)
-        self._conv_layout.setSpacing(2)
-        self._conv_layout.setAlignment(Qt.AlignTop)
+    # ═══════════════════════════════════════════════════
+    #  右侧聊天区
+    # ═══════════════════════════════════════════════════
 
-        scroll.setWidget(self._conv_content)
-        layout.addWidget(scroll, 1)
+    def _build_right(self):
+        self._right = QWidget()
+        rl = QVBoxLayout(self._right)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(0)
 
-    def _add_conv_item(self, key, avatar_text, avatar_color, name, subtitle, time_text, target, gradient=False, unread_count=0, is_online=None):
-        """添加一个对话列表项
+        self._chat_hdr = QWidget()
+        self._chat_hdr.setFixedHeight(140)
+        rl.addWidget(self._chat_hdr)
+        self._chat_hdr.hide()
 
-        Args:
-            key: 唯一标识
-            avatar_text: 头像文字
-            avatar_color: 头像背景色
-            name: 显示名称
-            subtitle: 预览文字
-            time_text: 时间文字
-            target: 目标 {"id":..., "name":..., "type":...}
-            gradient: 是否蓝渐变头像
-            unread_count: 未读数
-            is_online: 好友在线状态（None 不显示，True 绿点，False 灰点）
-        """
-        is_active = (self._current_target and
-                     self._current_target["type"] == target["type"] and
-                     self._current_target["id"] == target["id"])
+        self._msg_scroll = QScrollArea()
+        self._msg_scroll.setWidgetResizable(True)
+        self._msg_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._msg_scroll.setStyleSheet(
+            f"QScrollArea{{border:none;background:{C_WHITE};}}"
+            "QScrollBar:vertical{width:8px;background:transparent;}"
+            "QScrollBar::handle:vertical{background:#CBD5E1;border-radius:4px;min-height:24px;}")
+        self._msg_w = QWidget()
+        self._msg_l = QVBoxLayout(self._msg_w)
+        self._msg_l.setContentsMargins(48, 32, 48, 32)
+        self._msg_l.setSpacing(24)
+        self._msg_l.setAlignment(Qt.AlignTop)
+        self._msg_scroll.setWidget(self._msg_w)
 
-        container = QFrame()
-        container.setFixedHeight(76)
-        if is_active:
-            container.setStyleSheet("""
-                QFrame {
-                    background-color: #fff; border-radius: 18px;
-                }
-            """)
-        else:
-            container.setStyleSheet("""
-                QFrame { background-color: transparent; border-radius: 18px; }
-                QFrame:hover { background-color: rgba(255,255,255,0.5); }
-            """)
-
-        row = QHBoxLayout(container)
-        row.setContentsMargins(13, 13, 13, 13)
-        row.setSpacing(13)
-
-        # 圆形头像（带在线状态点）
-        avatar_container = QWidget()
-        avatar_container.setFixedSize(52, 52)
-        avatar_container.setStyleSheet("background: transparent;")
-
-        avatar = self._create_avatar(52, avatar_text, avatar_color, gradient)
-        avatar.setParent(avatar_container)
-
-        if unread_count > 0:
-            badge = QLabel(str(min(unread_count, 99)), avatar_container)
-            badge.setFixedSize(20, 20)
-            badge.setAlignment(Qt.AlignCenter)
-            badge.setStyleSheet("""
-                background-color: #EF4444; color: white; border-radius: 10px;
-                font-size: 24px; font-weight: 700; border: 2px solid #F7F9FD;
-            """)
-            badge.move(34, -2)
-
-        # 在线状态圆点（好友）
-        if is_online is not None:
-            dot = QLabel(avatar_container)
-            dot.setFixedSize(13, 13)
-            dot.setStyleSheet(
-                f"background-color: {'#34D399' if is_online else '#CBD5E1'}; "
-                f"border-radius: 6px; border: 2.5px solid {'#fff' if is_active else '#F7F9FD'};"
-            )
-            dot.move(39, 39)
-
-        row.addWidget(avatar_container)
-
-        # 文字区域
-        text_col = QVBoxLayout()
-        text_col.setSpacing(4)
-
-        name_row = QHBoxLayout()
-        name_label = QLabel(name)
-        name_label.setStyleSheet(
-            f"font-size: 24px; font-weight: {'700' if is_active else '600'}; color: {'#2D6CF6' if is_active else '#1E293B'}; background: transparent;")
-        name_row.addWidget(name_label)
-        name_row.addStretch()
-
-        if time_text:
-            time_label = QLabel(time_text)
-            time_label.setStyleSheet(
-                f"font-size: 24px; color: {'#2D6CF6' if is_active else '#A9B6C8'}; background: transparent; font-weight: {'600' if is_active else '400'};")
-            name_row.addWidget(time_label)
-
-        text_col.addLayout(name_row)
-
-        sub_label = QLabel(subtitle)
-        sub_label.setStyleSheet("font-size: 24px; color: #6B7A90; background: transparent;")
-        text_col.addWidget(sub_label)
-
-        row.addLayout(text_col, 1)
-
-        # 让所有子控件不拦截鼠标事件，确保点击能到达容器
-        for child in container.findChildren(QWidget):
-            child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
-        # 点击切换聊天
-        container.mousePressEvent = lambda e, t=target: self._on_contact_selected(t)
-
-        self._conv_items[key] = container
-        self._conv_layout.addWidget(container)
-
-    def _refresh_conv_list(self):
-        """刷新对话列表，排序：当前查看的对话 > 有未读的其他对话 > 好友"""
-        # 清空整个布局
-        while self._conv_layout.count():
-            item = self._conv_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._conv_items.clear()
-
-        # 更新左侧「消息」标题旁的总未读角标
-        total_unread = sum(self._unread_counts.values())
-        if total_unread > 0:
-            self._total_unread_badge.setText(f"{total_unread} 条未读")
-            self._total_unread_badge.show()
-        else:
-            self._total_unread_badge.hide()
-
-        online_ids = {u.get("user_id") for u in self.state.online_users}
-        active_key = None
-        if self._current_target:
-            active_key = f"{self._current_target['type']}_{self._current_target['id']}"
-
-        shown_keys = set()
-
-        # ========== 1. 有未读消息的对话（按时间排序） ==========
-        unread_keys = sorted(
-            [k for k in self._unread_counts],
-            key=lambda k: self._last_msg_times.get(k, 0),
-            reverse=True
+        # 初始欢迎界面
+        self._welcome = QLabel(
+            "<div style='text-align:center;'>"
+            "<div style='font-size:72px;margin-bottom:24px;'>💬</div>"
+            "<div style='font-size:32px;font-weight:700;color:#64748B;'>欢迎使用校园通</div>"
+            "<div style='font-size:22px;color:#94A3B8;margin-top:12px;'>选择一个联系人开始聊天</div>"
+            "</div>"
         )
-        for key in unread_keys:
-            if key not in shown_keys:
-                shown_keys.add(key)
-                # 检查是否匹配搜索
-                if self._search_text:
-                    name = self._get_conv_name(key)
-                    preview = self._last_msg_previews.get(key, "")
-                    if not self.matches_search(name, preview):
-                        continue
-                self._add_conv_item_for_key(key, online_ids, is_active=False)
+        self._welcome.setAlignment(Qt.AlignCenter)
+        self._welcome.setStyleSheet("background:transparent;")
+        self._msg_l.addStretch()
+        self._msg_l.addWidget(self._welcome)
+        self._msg_l.addStretch()
 
-        # ========== 3. 已加入的群聊（搜索过滤） ==========
-        for g in self._my_groups:
-            key = f"room_{g['group_id']}"
-            if key not in shown_keys:
-                display_name = g.get("remark") or g["group_name"]
-                preview = self._last_msg_previews.get(key, "")
-                subtitle = preview if preview else "点击进入群聊"
-                # 搜索过滤
-                if self._search_text and not self.matches_search(display_name, subtitle):
-                    continue
-                shown_keys.add(key)
-                self._add_conv_item(
-                    key, "👥", "", display_name,
-                    subtitle, "",
-                    {"id": g["group_id"], "name": display_name, "type": "room"},
-                    gradient=True,
-                )
+        rl.addWidget(self._msg_scroll, 1)
 
-        # ========== 4. 好友列表（搜索过滤） ==========
-        remaining = []
-        for f in (self.state.friends or []):
-            uid = f["user_id"]
-            if uid == self.state.user_id:
-                continue
-            uname = f.get("remark") or f.get("username", "未知")
-            key = f"p2p_{uid}"
-            if key in shown_keys:
-                continue
-            # 搜索过滤
-            if self._search_text and not self.matches_search(uname, ""):
-                continue
-            last_time = self._last_msg_times.get(key, 0)
-            is_online = f.get("online", False) or uid in online_ids
-            remaining.append((uid, uname, key, last_time, is_online))
+        rl.addWidget(self._build_composer())
+        return self._right
 
-        remaining.sort(key=lambda x: x[3] if x[3] else 0, reverse=True)
-        for uid, uname, key, _, is_online in remaining:
-            shown_keys.add(key)
-            preview = self._last_msg_previews.get(key, "")
-            subtitle = preview if preview else ("在线" if is_online else "离线")
-            self._add_conv_item(
-                key, uname[0] if uname else "?",
-                _AVATAR_COLORS[uid % len(_AVATAR_COLORS)],
-                uname, subtitle, "",
-                {"id": uid, "name": uname, "type": "p2p"},
-                is_online=is_online,
-            )
+    def _set_chat_header(self, name, sub, is_online=None):
+        """持久化布局：首次构建，后续仅更新文本和显隐"""
+        w = self._chat_hdr
+        if not hasattr(self, '_hdr_built'):
+            self._hdr_built = True
+            hl = QHBoxLayout(w)
+            hl.setContentsMargins(44, 28, 36, 26)
+            hl.setSpacing(32)
 
-        self._conv_layout.addStretch()
+            self._hdr_av = QLabel()
+            self._hdr_av.setFixedSize(80, 80)
+            self._hdr_av.setAlignment(Qt.AlignCenter)
+            self._hdr_av.setStyleSheet(f"font-size:36px;font-weight:600;color:white;border-radius:40px;background:{C_BLUE_GRAD};")
+            hl.addWidget(self._hdr_av)
 
-    def _add_conv_item_for_key(self, key, online_ids, is_active=False):
-        """根据 key 添加对话列表项
+            vi = QVBoxLayout()
+            vi.setSpacing(6)
+            self._hdr_name = QLabel()
+            self._hdr_name.setStyleSheet(f"font-size:34px;font-weight:800;color:{C_DARK};background:transparent;")
+            vi.addWidget(self._hdr_name)
 
-        Args:
-            key: 对话 key（格式 room_xxx 或 p2p_xxx）
-            online_ids: 在线用户ID集合
-            is_active: 是否为当前查看的对话
-        """
-        if key.startswith("room_"):
-            group_id = int(key[5:])
-            group_name = str(group_id)
-            for g in self._my_groups:
-                if g["group_id"] == group_id:
-                    group_name = g.get("remark") or g["group_name"]
-                    break
-            # 群聊数据尚未加载时，显示"加载中…"而不是群ID
-            if group_name == str(group_id):
-                group_name = "加载中…"
-            preview = self._last_msg_previews.get(key, "")
-            count = self._unread_counts.get(key, 0)
-            subtitle = preview if preview else "点击进入群聊"
-            self._add_conv_item(
-                key, "👥", "", group_name,
-                subtitle, "",
-                {"id": group_id, "name": group_name, "type": "room"},
-                gradient=True,
-                unread_count=count,
-            )
-        elif key.startswith("p2p_"):
-            uid = int(key[4:])
-            uname = self._find_user_name(uid)
-            is_online = uid in online_ids
-            preview = self._last_msg_previews.get(key, "")
-            count = self._unread_counts.get(key, 0)
-            subtitle = preview if preview else ("在线" if is_online else "离线")
-            self._add_conv_item(
-                key, uname[0] if uname else "?",
-                _AVATAR_COLORS[uid % len(_AVATAR_COLORS)],
-                uname, subtitle, "",
-                {"id": uid, "name": uname, "type": "p2p"},
-                unread_count=count,
-                is_online=is_online,
-            )
+            self._hdr_status = QLabel()
+            self._hdr_status.setStyleSheet("font-size:24px;background:transparent;")
+            vi.addWidget(self._hdr_status)
 
-    def _on_search_text_changed(self, text):
-        """搜索框文字变化时过滤对话列表"""
-        self._search_text = text.strip().lower()
-        self._refresh_conv_list()
+            self._hdr_sub = QLabel()
+            self._hdr_sub.setStyleSheet(f"font-size:22px;color:{C_SUBTLE};background:transparent;")
+            vi.addWidget(self._hdr_sub)
 
-    def matches_search(self, name, subtitle):
-        """判断名称或预览是否匹配搜索文字"""
-        if not self._search_text:
-            return True
-        return self._search_text in name.lower() or self._search_text in subtitle.lower()
+            hl.addLayout(vi)
+            hl.addStretch()
 
-    def _get_conv_name(self, key):
-        """根据 key 获取对话显示名称"""
-        if key.startswith("room_"):
-            group_id = int(key[5:])
-            for g in self._my_groups:
-                if g["group_id"] == group_id:
-                    return g.get("remark") or g["group_name"]
-            return f"群聊{group_id}"
-        elif key.startswith("p2p_"):
-            uid = int(key[4:])
-            return self._find_user_name(uid)
-        return key
+            # 群聊设置按钮（⋯ → 展开设置面板）
+            self._hdr_mb = QPushButton("⋯")
+            self._hdr_mb.setFixedSize(64, 64)
+            self._hdr_mb.setCursor(Qt.PointingHandCursor)
+            self._hdr_mb.setStyleSheet(f"QPushButton{{background:{C_BLUE_BG};border:none;border-radius:18px;font-size:32px;}}"
+                                       f"QPushButton:hover{{background:#D1E3FA;}}")
+            self._hdr_mb.clicked.connect(self._show_group_settings)
+            self._hdr_mb.hide()
+            hl.addWidget(self._hdr_mb)
 
-    def _on_friend_list(self, msg):
-        """收到好友列表时刷新对话列表（用于过滤非好友）"""
-        self.state.friends = msg.get("friends", [])
+            self._hdr_more = QPushButton("⋯")
+            self._hdr_more.setFixedSize(64, 64)
+            self._hdr_more.setCursor(Qt.PointingHandCursor)
+            self._hdr_more.setStyleSheet(f"QPushButton{{background:{C_BLUE_BG};border:none;border-radius:18px;font-size:32px;}}"
+                                         f"QPushButton:hover{{background:#D1E3FA;}}")
+            self._hdr_more.clicked.connect(self._show_more_menu)
+            self._hdr_more.hide()
+            hl.addWidget(self._hdr_more)
 
-        # 如果当前正在和好友聊天，更新头部显示名称（备注可能在好友面板已修改）
-        if self._current_target and self._current_target["type"] == "p2p":
-            uid = self._current_target["id"]
-            for f in self.state.friends:
-                if f.get("user_id") == uid:
-                    new_name = f.get("remark") or f.get("username", f"用户{uid}")
-                    if new_name != self._current_target["name"]:
-                        self._current_target["name"] = new_name
-                        self._chat_title.setText(new_name)
-                        # 同步更新头像文字
-                        avatar_text = new_name[0] if new_name else "?"
-                        color = _AVATAR_COLORS[uid % len(_AVATAR_COLORS)]
-                        self._header_avatar.setText(avatar_text)
-                        self._header_avatar.setStyleSheet(f"""
-                            font-size: 24px; font-weight: 600; color: white;
-                            border-radius: 24px; background-color: {color};
-                        """)
-                        self._update_info_panel()
-                    break
-            self._refresh_conv_list()
-
-    # ==================== 群聊管理 ====================
-
-    def _on_group_list(self, msg):
-        """收到群聊列表"""
-        self._my_groups = msg.get("my_groups", [])
-        self._available_groups = msg.get("available", [])
-
-        # 如果当前正在查看某个群，更新其显示名称（备注优先）
-        if self._current_target and self._current_target["type"] == "room":
-            gid = self._current_target["id"]
-            for g in self._my_groups:
-                if g["group_id"] == gid:
-                    new_name = g.get("remark") or g.get("group_name", "")
-                    if new_name and new_name != self._current_target["name"]:
-                        self._current_target["name"] = new_name
-                        self._chat_title.setText(new_name)
-                    break
-
-        # 如果用户在等待加入群聊，自动弹出对话框
-        if self._pending_join_dialog:
-            self._pending_join_dialog = False
-            if self._available_groups:
-                self._show_join_group_dialog()
-
-        # 首次加载时默认选中公共聊天室
-        if self._current_target is None:
-            self._select_room()
+        # 更新文本
+        self._hdr_av.setText(name[0] if name else "💬")
+        self._hdr_name.setText(name if name else "")
+        if is_online is True:
+            self._hdr_status.setText("● 在线")
+            self._hdr_status.setStyleSheet(f"font-size:24px;color:{C_GREEN};background:transparent;")
+            self._hdr_status.show()
+        elif is_online is False:
+            self._hdr_status.setText("○ 离线")
+            self._hdr_status.setStyleSheet(f"font-size:24px;color:{C_SUBTLE};background:transparent;")
+            self._hdr_status.show()
         else:
-            self._refresh_conv_list()
+            self._hdr_status.hide()
+        self._hdr_sub.setText(sub if sub else "")
+        self._hdr_sub.setVisible(bool(sub))
 
-    def _on_invited_to_group(self, msg):
-        """被邀请加入群聊 — 自动刷新群聊列表使群聊出现在对话列表"""
-        group_id = msg.get("group_id")
-        group_name = msg.get("group_name")
-        if group_id and group_name:
-            # 先直接加入本地缓存，立即显示
-            exists = any(g["group_id"] == group_id for g in self._my_groups)
-            if not exists:
-                self._my_groups.append({
-                    "group_id": group_id,
-                    "group_name": group_name,
-                })
-                self._refresh_conv_list()
-            # 再从服务器获取完整列表确保数据一致
-            self.net.send({"type": MT.GROUP_LIST})
-
-    def _on_group_join(self, msg):
-        """收到加入群聊结果"""
-        if msg.get("ok"):
-            self.net.send({"type": MT.GROUP_LIST})  # 刷新群聊列表
-        else:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "失败", msg.get("message", "加入群聊失败"))
-
-    def _show_join_group_dialog(self):
-        """显示加入群聊对话框"""
-        # 如果可用列表为空，先请求并标记等待自动弹出
-        if not self._available_groups:
-            self._pending_join_dialog = True
-            self.net.send({"type": MT.GROUP_LIST})
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.information(self, "提示", "正在加载群聊列表…")
-            return
-
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QListWidget, QPushButton, QListWidgetItem
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("加入群聊")
-        dialog.setFixedSize(360, 420)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #F7F9FD; border-radius: 16px; }
-        """)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
-
-        list_widget = QListWidget()
-        list_widget.setStyleSheet("""
-            QListWidget {
-                background: #fff; border: none; border-radius: 12px;
-                font-size: 24px; padding: 8px;
-            }
-            QListWidget::item {
-                padding: 12px 16px; border-radius: 8px;
-            }
-            QListWidget::item:hover { background: #F7F9FD; }
-            QListWidget::item:selected { background: #E7EFFC; color: #1E293B; }
-        """)
-
-        for g in self._available_groups:
-            item = QListWidgetItem(f"👥  {g['group_name']}  ({g['group_id']})")
-            item.setData(Qt.UserRole, g["group_id"])
-            list_widget.addItem(item)
-
-        # 默认选中第一项
-        if list_widget.count() > 0:
-            list_widget.setCurrentRow(0)
-
-        layout.addWidget(list_widget)
-
-        join_btn = QPushButton("加入")
-        join_btn.setFixedHeight(48)
-        join_btn.setCursor(Qt.PointingHandCursor)
-        join_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #4F8DFD, stop:1 #2D6CF6);
-                color: white; border: none; border-radius: 14px;
-            font-size: 24px; font-weight: 700;
-            }
-            QPushButton:hover { background: #1D5CE6; }
-        """)
-        join_btn.clicked.connect(lambda: self._do_join_group(dialog, list_widget))
-        layout.addWidget(join_btn)
-
-        cancel_btn = QPushButton("取消")
-        cancel_btn.setFixedHeight(48)
-        cancel_btn.setCursor(Qt.PointingHandCursor)
-        cancel_btn.setStyleSheet("""
-            QPushButton {
-                background: #fff; color: #94A3B8; border: 1px solid #E5EAF3;
-                border-radius: 14px; font-size: 24px;
-            }
-            QPushButton:hover { background: #F7F9FD; color: #64748B; }
-        """)
-        cancel_btn.clicked.connect(dialog.reject)
-        layout.addWidget(cancel_btn)
-
-        dialog.exec_()
-
-    def _do_join_group(self, dialog, list_widget):
-        """执行加入群聊"""
-        selected = list_widget.currentItem()
-        if not selected:
-            from PyQt5.QtWidgets import QMessageBox
-            QMessageBox.information(self, "提示", "请先选择一个群聊")
-            return
-        group_id = selected.data(Qt.UserRole)
-        self.net.send({"type": MT.GROUP_JOIN, "group_id": group_id})
-        dialog.accept()
-
-    # ==================== 右侧：聊天区域 ====================
-
-    def _build_chat_area(self):
-        """构建右侧聊天区域（对齐设计稿）"""
-        self._chat_panel = QFrame()
-        self._chat_panel.setStyleSheet("background-color: #F7F9FD;")
-
-        layout = QVBoxLayout(self._chat_panel)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # 聊天头部（72px）
-        self._build_chat_header()
-        layout.addWidget(self._header)
-
-        # 消息滚动区域
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea { border: none; background-color: #FAFBFE; }
-            QScrollBar:vertical { background: transparent; width: 6px; }
-            QScrollBar::handle:vertical { background: rgba(100,116,139,0.22); border-radius: 6px; }
-        """)
-
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        self._msg_layout = QVBoxLayout(content)
-        self._msg_layout.setContentsMargins(32, 26, 32, 26)
-        self._msg_layout.setSpacing(20)
-        self._msg_layout.setAlignment(Qt.AlignTop)
-
-        scroll.setWidget(content)
-        self._scroll = scroll
-        layout.addWidget(scroll, 1)
-
-        # 新消息提示按钮
-        self._new_msg_hint = QPushButton("↓ 新消息")
-        self._new_msg_hint.setFixedHeight(38)
-        self._new_msg_hint.setCursor(Qt.PointingHandCursor)
-        self._new_msg_hint.hide()
-        self._new_msg_hint.setStyleSheet("""
-            QPushButton {
-                background: #2D6CF6; color: white; border: none;
-                border-radius: 19px; font-size: 24px; font-weight: 700;
-                padding: 0 22px; margin-right: 24px; margin-bottom: 4px;
-            }
-            QPushButton:hover { background: #1D5CE6; }
-        """)
-        self._new_msg_hint.clicked.connect(self._scroll_to_bottom)
-        layout.addWidget(self._new_msg_hint, alignment=Qt.AlignRight)
-
-        # 监听滚动位置
-        scroll.verticalScrollBar().valueChanged.connect(self._on_chat_scrolled)
-
-        # 消息输入区域（卡片式）
-        self._build_composer()
-        layout.addWidget(self._composer)
-
-    def _build_chat_header(self):
-        """构建聊天头部（72px，带头像、名称、状态、操作按钮）"""
-        self._header = QFrame()
-        self._header.setFixedHeight(72)
-        self._header.setStyleSheet("background-color: #F7F9FD; border-bottom: 1px solid #EEF1F7;")
-
-        hl = QHBoxLayout(self._header)
-        hl.setContentsMargins(28, 0, 28, 0)
-        hl.setSpacing(15)
-
-        # 左侧：头像
-        self._header_avatar = self._create_avatar(48, "", "#6366F1")
-        hl.addWidget(self._header_avatar)
-
-        # 中间：名称 + 状态文字
-        text_col = QVBoxLayout()
-        text_col.setSpacing(2)
-
-        # 第一行：名称 + 状态标记 + 加密标签
-        top_row = QHBoxLayout()
-        top_row.setSpacing(9)
-
-        self._chat_title = QLabel("公共聊天室")
-        self._chat_title.setStyleSheet("font-size: 32px; font-weight: 800; color: #1E293B; background: transparent;")
-        top_row.addWidget(self._chat_title)
-
-        # 在线状态标签（私聊用）
-        self._online_status_label = QLabel("")
-        self._online_status_label.setStyleSheet("""
-            font-size: 24px; font-weight: 600; color: #34D399;
-            background: transparent;
-        """)
-        self._online_status_label.hide()
-        top_row.addWidget(self._online_status_label)
-
-        # 设置按钮（群聊用）
-        self._settings_btn = QPushButton("⚙")
-        self._settings_btn.setFixedSize(24, 24)
-        self._settings_btn.setCursor(Qt.PointingHandCursor)
-        self._settings_btn.setVisible(False)
-        self._settings_btn.setStyleSheet("""
-            QPushButton {
-                background: transparent; color: #94A3B8; border: none;
-                border-radius: 8px; font-size: 24px;
-            }
-            QPushButton:hover { background: #F1F5FB; color: #64748B; }
-        """)
-        self._settings_btn.clicked.connect(self._on_open_settings)
-        top_row.addWidget(self._settings_btn)
-
-        top_row.addStretch()
-        text_col.addLayout(top_row)
-
-        # 第二行：描述 / 在线人数 / 加密标记
-        bot_row = QHBoxLayout()
-        bot_row.setSpacing(7)
-
-        self._chat_subtitle = QLabel("")
-        self._chat_subtitle.setStyleSheet("font-size: 25px; color: #6B7A90; background: transparent;")
-        bot_row.addWidget(self._chat_subtitle)
-
-        # 加密标识
-        self._encryption_badge = QLabel("🔒 消息已加密")
-        self._encryption_badge.setStyleSheet("""
-            font-size: 24px; color: #2D6CF6; background: #E7EFFC;
-            padding: 2px 9px; border-radius: 9px;
-        """)
-        self._encryption_badge.hide()
-        bot_row.addWidget(self._encryption_badge)
-
-        bot_row.addStretch()
-        text_col.addLayout(bot_row)
-
-        hl.addLayout(text_col, 1)
-
-        # 右侧：操作按钮
-        hl.addStretch()
-
-        # 群成员按钮
-        self._members_btn = QPushButton("👥")
-        self._members_btn.setFixedSize(40, 40)
-        self._members_btn.setCursor(Qt.PointingHandCursor)
-        self._members_btn.setStyleSheet("""
-            QPushButton {
-                background: #fff; border: none; border-radius: 13px;
-                font-size: 24px;
-            }
-            QPushButton:hover { background: #F1F5FB; }
-        """)
-        self._members_btn.hide()
-        self._members_btn.clicked.connect(self._on_members_btn)
-        hl.addWidget(self._members_btn)
-
-        # 更多菜单按钮
-        self._more_btn = QPushButton("⋯")
-        self._more_btn.setFixedSize(40, 40)
-        self._more_btn.setCursor(Qt.PointingHandCursor)
-        self._more_btn.setStyleSheet("""
-            QPushButton {
-                background: #fff; border: none; border-radius: 13px;
-                font-size: 26px; color: #6B7A90;
-            }
-            QPushButton:hover { background: #F1F5FB; }
-        """)
-        self._more_btn.clicked.connect(self._on_more_btn)
-        hl.addWidget(self._more_btn)
+        # 按钮显隐
+        is_room = bool(self._current_target and self._current_target.get("type") == "room")
+        self._hdr_mb.setVisible(is_room)
+        self._hdr_more.hide()
 
     def _build_composer(self):
-        """构建卡片式输入区域（对齐设计稿：白底圆角卡片 + 工具栏 + 输入行）"""
-        self._composer = QFrame()
-        self._composer.setStyleSheet("background-color: #EEF2FA;")
+        outer = QFrame()
+        outer.setStyleSheet(f"background:{C_BG};")
+        ol = QVBoxLayout(outer)
+        ol.setContentsMargins(36, 28, 36, 32)
 
-        cl = QVBoxLayout(self._composer)
-        cl.setContentsMargins(24, 16, 24, 20)
+        card = QFrame()
+        card.setStyleSheet(f"QFrame{{background:{C_CARD};border-radius:20px;}}")
+        _apply_shadow(card, 18, 4, 22)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(26, 24, 26, 24)
         cl.setSpacing(0)
 
-        # 白色卡片容器
-        card = QFrame()
-        card.setStyleSheet("""
-            QFrame {
-                background-color: #fff; border-radius: 20px;
-            }
+        ir = QHBoxLayout()
+        ir.setSpacing(16)
+
+        self._input = QTextEdit()
+        self._input.setPlaceholderText("输入消息，Enter 发送…")
+        self._input.setFixedHeight(56)
+        self._input.setAcceptRichText(False)
+        self._input.setStyleSheet(f"border:none;background:transparent;font-size:24px;color:{C_DARK};padding:4px 8px;")
+        self._input.textChanged.connect(self._on_input_resize)
+        self._input.installEventFilter(self)
+        ir.addWidget(self._input, 1)
+
+        self._send_btn = QPushButton("➤")
+        self._send_btn.setFixedSize(64, 64)
+        self._send_btn.setCursor(Qt.PointingHandCursor)
+        self._send_btn.setStyleSheet(f"""
+            QPushButton{{background:{C_BLUE_GRAD};color:white;border:none;border-radius:20px;font-size:28px;}}
+            QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #3B7FED,stop:1 #1D5CE6);}}
         """)
+        _apply_shadow(self._send_btn, 28, 12, 90)
+        self._send_btn.clicked.connect(self._on_send)
+        ir.addWidget(self._send_btn)
+        cl.addLayout(ir)
 
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(16, 14, 16, 14)
-        card_layout.setSpacing(0)
+        ol.addWidget(card)
+        return outer
 
-        # 工具栏行：附件 + 表情 + 文件 + 加密标识
-        toolbar = QFrame()
-        toolbar.setStyleSheet("background: transparent;")
-        tl = QHBoxLayout(toolbar)
-        tl.setContentsMargins(4, 2, 4, 12)
-        tl.setSpacing(18)
+    def _on_input_resize(self):
+        doc = self._input.document()
+        h = int(doc.size().height()) + 12
+        h = max(56, min(h, 224))
+        self._input.setFixedHeight(h)
 
-        # 工具栏图标
-        toolbar_icons = [
-            ("📎", "附件"),  # attachment
-            ("😊", "表情"),  # emoji
-            ("📄", "文件"),  # file
-        ]
-        for icon, tip in toolbar_icons:
-            btn = QPushButton(icon)
-            btn.setFixedSize(22, 22)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setToolTip(tip)
-            btn.setStyleSheet("""
-                QPushButton {
-                    background: transparent; border: none; font-size: 24px;
-                    color: #94A3B8;
-                }
-                QPushButton:hover { color: #2D6CF6; }
-            """)
-            tl.addWidget(btn)
+    def eventFilter(self, obj, event):
+        from PyQt5.QtCore import QEvent
+        if obj == self._input and event.type() == QEvent.KeyPress:
+            if event.key() == Qt.Key_Return and not (event.modifiers() & Qt.ShiftModifier):
+                self._on_send()
+                return True
+        return super().eventFilter(obj, event)
 
-        tl.addStretch()
+    # ═══════════════════════════════════════════════════
+    #  对话列表项
+    # ═══════════════════════════════════════════════════
 
-        # 加密标识（右对齐）
-        encrypt_label = QLabel("🔒 端对端加密")
-        encrypt_label.setStyleSheet("""
-            font-size: 24px; color: #B0BAC8; background: transparent;
-        """)
-        tl.addWidget(encrypt_label)
+    def _add_conv_item(self, key, av_text, av_color, name, sub, time_text, target, gradient=False, is_online=None):
+        active = self._current_target and self._conv_key(self._current_target) == key
 
-        # 分隔线
-        divider = QFrame()
-        divider.setFixedHeight(1)
-        divider.setStyleSheet("background-color: #F0F4F9;")
+        if key in self._conv_items:
+            it = self._conv_items[key]
+            it.findChild(QLabel, "c_text").setText(
+                f"<span style='font-size:27px;font-weight:700;color:{C_DARK};'>{name}</span>"
+                f"<br><span style='font-size:20px;color:{C_MUTED};'>{sub}</span>")
+            it.findChild(QLabel, "c_time").setText(time_text)
+            # 更新激活态
+            if active:
+                it.setStyleSheet(
+                    "QPushButton#ConvItem{background:#E0E7F5;border-radius:18px;padding:44px 28px 44px 60px;border:none;text-align:left;}")
+            else:
+                it.setStyleSheet(
+                    "QPushButton#ConvItem{background:transparent;border-radius:18px;padding:44px 28px 44px 60px;border:none;text-align:left;}"
+                    "QPushButton#ConvItem:hover{background:#E8EDF5;}")
+            return
 
-        # 输入行：文本框 + 发送按钮
-        input_row = QFrame()
-        input_row.setStyleSheet("background: transparent;")
-        il = QHBoxLayout(input_row)
-        il.setContentsMargins(4, 12, 4, 2)
-        il.setSpacing(13)
+        btn = QPushButton()
+        btn.setObjectName("ConvItem")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.clicked.connect(lambda _, t=target: self._select_target(t))
+        if active:
+            btn.setStyleSheet(
+                "QPushButton#ConvItem{background:#E0E7F5;border-radius:18px;padding:44px 28px 44px 60px;border:none;text-align:left;}")
+        else:
+            btn.setStyleSheet(
+                "QPushButton#ConvItem{background:transparent;border-radius:18px;padding:44px 28px 44px 60px;border:none;text-align:left;}"
+                "QPushButton#ConvItem:hover{background:#E8EDF5;}")
 
-        self._text_input = QLineEdit()
-        self._text_input.setPlaceholderText("输入消息，Enter 发送…")
-        self._text_input.setFixedHeight(48)
-        self._text_input.setStyleSheet("""
-            QLineEdit {
-                background-color: transparent; border: none;
-                font-size: 28px; color: #1E293B;
-            }
-            QLineEdit::placeholder { color: #B0BAC8; }
-        """)
-        self._text_input.returnPressed.connect(self._send_message)
-        il.addWidget(self._text_input)
+        # ── 按钮内部布局：头像 + 文字列 ──
+        row = QHBoxLayout(btn)
+        row.setContentsMargins(18, 0, 0, 0)
+        row.setSpacing(16)
 
-        # 发送按钮（圆角渐变）
-        send_btn = QPushButton("➤")
-        send_btn.setFixedSize(52, 52)
-        send_btn.setCursor(Qt.PointingHandCursor)
-        send_btn.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #4F8DFD, stop:1 #2D6CF6);
-                color: white; border: none; border-radius: 16px;
-                font-size: 28px; font-weight: 700;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #3B7FED, stop:1 #1D5CE6);
-            }
-        """)
-        send_btn.clicked.connect(self._send_message)
-        il.addWidget(send_btn)
+        # 头像容器 + 状态点覆盖在右下角
+        av_wrap = QWidget()
+        av_wrap.setFixedSize(65, 65)
+        av_wrap.setStyleSheet("background:transparent;")
+        av_wrap.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
-        card_layout.addWidget(toolbar)
-        card_layout.addWidget(divider)
-        card_layout.addWidget(input_row)
+        av = QLabel(av_text, av_wrap)
+        av.setFixedSize(65, 65)
+        av.setAlignment(Qt.AlignCenter)
+        if gradient:
+            av.setStyleSheet(f"font-size:30px;font-weight:600;color:white;border-radius:32px;background:{C_BLUE_GRAD};")
+        else:
+            av.setStyleSheet(f"font-size:30px;font-weight:600;color:white;border-radius:32px;background:{av_color};")
+        av.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
-        cl.addWidget(card)
+        if is_online is not None:
+            dot = QLabel(av_wrap)
+            dot.setFixedSize(14, 14)
+            if is_online:
+                dot.setStyleSheet(f"background:{C_GREEN};border-radius:7px;border:2px solid white;")
+            else:
+                dot.setStyleSheet(f"background:{C_OFFLINE};border-radius:7px;border:2px solid white;")
+            dot.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            dot.move(49, 49)
 
-    # ==================== 右侧：信息面板 ====================
+        row.addWidget(av_wrap)
 
-    def _build_info_panel(self):
-        """构建右侧信息面板（私聊时显示用户信息和共享文件）"""
-        self._info_panel = QFrame()
-        self._info_panel.setFixedWidth(260)
-        self._info_panel.setStyleSheet("background-color: #F7F9FD; border-left: 1px solid #EEF1F7;")
+        # 文字：名称+预览合并，时间放最右
+        tx = QVBoxLayout()
+        tx.setContentsMargins(10, 0, 0, 0)
+        tx.setSpacing(0)
 
-        layout = QVBoxLayout(self._info_panel)
-        layout.setContentsMargins(20, 26, 20, 26)
-        layout.setSpacing(0)
-        layout.setAlignment(Qt.AlignTop)
+        combined = QLabel()
+        combined.setObjectName("c_text")
+        combined.setTextFormat(Qt.RichText)
+        combined.setText(
+            f"<span style='font-size:27px;font-weight:700;color:{C_DARK};'>{name}</span>"
+            f"<br><span style='font-size:20px;color:{C_MUTED};'>{sub}</span>")
+        combined.setStyleSheet("background:transparent;")
+        combined.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        tx.addWidget(combined)
 
-        # ====== 用户信息区域 ======
-        self._info_avatar_container = QWidget()
-        self._info_avatar_container.setFixedSize(74, 74)
-        self._info_avatar_container.setStyleSheet("background: transparent;")
+        row.addLayout(tx, 1)
 
-        self._info_avatar = self._create_avatar(74, "", "#6366F1")
-        self._info_avatar.setParent(self._info_avatar_container)
+        # 时间（右侧）
+        ti = QLabel(time_text)
+        ti.setObjectName("c_time")
+        ti.setStyleSheet(f"font-size:22px;color:{C_SUBTLE};background:transparent; padding-right:25px;")
+        ti.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        row.addWidget(ti)
 
-        layout.addWidget(self._info_avatar_container, alignment=Qt.AlignHCenter)
-
-        self._info_name = QLabel("")
-        self._info_name.setStyleSheet("font-size: 28px; font-weight: 700; color: #1E293B; background: transparent;")
-        self._info_name.setAlignment(Qt.AlignCenter)
-        layout.addSpacing(12)
-        layout.addWidget(self._info_name)
-
-        self._info_status = QLabel("")
-        self._info_status.setStyleSheet("font-size: 24px; color: #6B7A90; background: transparent;")
-        self._info_status.setAlignment(Qt.AlignCenter)
-        layout.addSpacing(5)
-        layout.addWidget(self._info_status)
-
-        self._info_desc = QLabel("")
-        self._info_desc.setStyleSheet("font-size: 24px; color: #94A3B8; background: transparent;")
-        self._info_desc.setAlignment(Qt.AlignCenter)
-        layout.addSpacing(4)
-        layout.addWidget(self._info_desc)
-
-        # 操作按钮
-        layout.addSpacing(16)
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(9)
-        btn_row.setAlignment(Qt.AlignHCenter)
-
-        chat_btn = QPushButton("💬")
-        chat_btn.setFixedSize(40, 40)
-        chat_btn.setCursor(Qt.PointingHandCursor)
-        chat_btn.setStyleSheet("""
-            QPushButton {
-                background: #E7EFFC; border: none; border-radius: 13px;
-                font-size: 24px;
-            }
-            QPushButton:hover { background: #D1E3FA; }
-        """)
-        btn_row.addWidget(chat_btn)
-
-        self._info_remove_btn = QPushButton("✕")
-        self._info_remove_btn.setFixedSize(40, 40)
-        self._info_remove_btn.setCursor(Qt.PointingHandCursor)
-        self._info_remove_btn.setStyleSheet("""
-            QPushButton {
-                background: #FEF2F2; border: none; border-radius: 13px;
-                font-size: 24px; color: #EF4444;
-            }
-            QPushButton:hover { background: #FEE2E2; }
-        """)
-        self._info_remove_btn.clicked.connect(self._on_remove_friend)
-        btn_row.addWidget(self._info_remove_btn)
-
-        layout.addLayout(btn_row)
-
-        # 分隔线
-        layout.addSpacing(22)
+        self._conv_items[key] = btn
+        self._conv_l.addWidget(btn)
         sep = QFrame()
         sep.setFixedHeight(1)
-        sep.setStyleSheet("background-color: #E5EAF3;")
-        layout.addWidget(sep)
+        sep.setStyleSheet(f"background:{C_BORDER};margin:0 20px;")
+        sep.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._conv_l.addWidget(sep)
 
-        # ====== 共享文件区域 ======
-        layout.addSpacing(20)
-        files_title = QLabel("共享文件")
-        files_title.setStyleSheet("""
-            font-size: 24px; font-weight: 700; color: #94A3B8;
-            letter-spacing: 1px; background: transparent;
-        """)
-        layout.addWidget(files_title)
+    def _matches_search(self, name):
+        if not self._search_text:
+            return True
+        return self._search_text in name.lower()
 
-        layout.addSpacing(14)
-        self._info_files_layout = QVBoxLayout()
-        self._info_files_layout.setSpacing(9)
-        self._info_files_layout.setAlignment(Qt.AlignTop)
+    def _is_online(self, uid):
+        for u in (self.state.online_users or []):
+            if u.get("user_id") == uid:
+                return True
+        return False
 
-        # 示例：暂无文件
-        self._info_no_files = QLabel("暂无共享文件")
-        self._info_no_files.setStyleSheet("font-size: 24px; color: #CBD5E1; background: transparent; padding: 10px 0;")
-        self._info_no_files.setAlignment(Qt.AlignCenter)
-        self._info_files_layout.addWidget(self._info_no_files)
+    def _refresh_list(self):
+        # 清空
+        for k in list(self._conv_items.keys()):
+            w = self._conv_items.pop(k)
+            w.deleteLater()
+        while self._conv_l.count():
+            it = self._conv_l.takeAt(0)
+            if it.widget():
+                it.widget().deleteLater()
+            elif it.spacerItem():
+                self._conv_l.removeItem(it)
 
-        layout.addLayout(self._info_files_layout)
-        layout.addStretch()
+        # 顶部横线
+        top_sep = QFrame()
+        top_sep.setFixedHeight(1)
+        top_sep.setStyleSheet(f"background:{C_BORDER};margin:0 20px;")
+        self._conv_l.addWidget(top_sep)
 
-    def _update_info_panel(self):
-        """根据当前聊天目标更新右侧信息面板"""
-        if not self._current_target or self._current_target["type"] != "p2p":
-            self._info_panel.hide()
-            return
+        # 公共聊天室
+        if self._matches_search("公共聊天室"):
+            self._add_conv_item(
+                f"room_{PUBLIC_ROOM_ID}",
+                "👥", "", "公共聊天室",
+                self._last_previews.get("room_0", ""),
+                self._last_times.get("room_0", ""),
+                {"id": PUBLIC_ROOM_ID, "name": "公共聊天室", "type": "room"},
+                gradient=True)
 
-        self._info_panel.show()
-        target = self._current_target
-        uid = target["id"]
-        uname = target["name"]
+        # 群聊
+        for g in self._my_groups:
+            gid = g["group_id"]
+            key = f"room_{gid}"
+            if not self._matches_search(g.get("remark") or g.get("group_name", "")):
+                continue
+            self._add_conv_item(
+                key,
+                (g.get("remark") or g.get("group_name", ""))[0], _AVATAR_COLORS[hash(str(gid)) % len(_AVATAR_COLORS)],
+                g.get("remark") or g.get("group_name", ""),
+                self._last_previews.get(key, ""),
+                self._last_times.get(key, ""),
+                {"id": gid, "name": g.get("remark") or g.get("group_name", ""), "type": "room"})
 
-        # 更新头像
-        avatar_text = uname[0] if uname else "?"
-        color = _AVATAR_COLORS[uid % len(_AVATAR_COLORS)]
-        self._info_avatar.setText(avatar_text)
-        self._info_avatar.setStyleSheet(f"""
-            font-size: 34px; font-weight: 600; color: white;
-            border-radius: 37px; background-color: {color};
-        """)
-
-        self._info_name.setText(uname)
-
-        # 在线状态
-        online_ids = {u.get("user_id") for u in self.state.online_users}
-        is_online = uid in online_ids
-        if is_online:
-            self._info_status.setText("🟢 在线")
-        else:
-            self._info_status.setText("⚪ 离线")
-
-        # 查找好友信息中的班级
-        desc = ""
+        # 好友（全部显示，区分在线/离线）
         for f in (self.state.friends or []):
-            if f.get("user_id") == uid:
-                cls = f.get("class_name", "")
-                if cls:
-                    desc = cls
-                break
-        self._info_desc.setText(desc)
+            uid = f["user_id"]
+            key = f"p2p_{uid}"
+            if not self._matches_search(f.get("remark") or f["username"]):
+                continue
+            online = self._is_online(uid)
+            self._add_conv_item(
+                key,
+                (f.get("remark") or f["username"])[0], _AVATAR_COLORS[uid % len(_AVATAR_COLORS)],
+                f.get("remark") or f["username"],
+                self._last_previews.get(key, ""),
+                self._last_times.get(key, ""),
+                {"id": uid, "name": f.get("remark") or f["username"], "type": "p2p"},
+                is_online=online)
 
-    # ==================== 联系人切换 ====================
+        self._conv_l.addStretch()
 
-    def _on_contact_selected(self, target):
-        """点击联系人切换聊天"""
+    def _select_target(self, target):
+        if self._current_target and self._current_target.get("id") == target.get("id") and self._current_target.get("type") == target.get("type"):
+            return
         self._current_target = target
-        key = f"{target['type']}_{target['id']}"
-
-        if target["type"] == "room":
-            self._update_chat_header_for_group(target)
-        else:
-            self._update_chat_header_for_p2p(target)
-
-        # 清空该对话的未读计数
-        self._unread_counts.pop(key, None)
-
+        self._unread.pop(self._conv_key(target), None)
         self._clear_messages()
-        # 网络连接后才加载历史（初始化时网络尚未就绪）
-        if self.state.user_id is not None:
-            self._load_history()
-        self._refresh_conv_list()
-        self._update_info_panel()
+        name = target["name"]
+        sub = ""
+        online = None
+        if target.get("type") == "p2p":
+            online = self._is_online(target["id"])
+        self._chat_hdr.show()
+        self._set_chat_header(name, sub, online)
+        self._history_token += 1
+        self._load_history(target)
+        self._refresh_list()
 
-    def _update_chat_header_for_group(self, target):
-        """更新聊天头部为群聊模式"""
-        self._chat_title.setText(target["name"])
+    def _conv_key(self, target):
+        if not target:
+            return ""
+        return f"{target['type']}_{target['id']}"
 
-        # 群聊头像（渐变+图标）
-        self._header_avatar.setText("👥")
-        self._header_avatar.setStyleSheet("""
-            font-size: 24px; font-weight: 600; color: white;
-            border-radius: 24px;
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #4F8DFD, stop:1 #2D6CF6);
-        """)
-
-        # 状态标签隐藏
-        self._online_status_label.hide()
-
-        # 设置按钮可见
-        self._settings_btn.show()
-
-        # 子标题：在线人数
-        online_count = len(self.state.online_users)
-        total_count = len(self.state.friends or []) + 1  # 包含自己
-        self._chat_subtitle.setText(f"● {total_count} 人 · {online_count} 在线")
-        self._chat_subtitle.show()
-
-        # 加密标识
-        self._encryption_badge.show()
-        self._members_btn.show()
-
-    def _update_chat_header_for_p2p(self, target):
-        """更新聊天头部为私聊模式"""
-        self._chat_title.setText(target["name"])
-
-        # 头像
-        uid = target["id"]
-        avatar_text = target["name"][0] if target["name"] else "?"
-        color = _AVATAR_COLORS[uid % len(_AVATAR_COLORS)]
-        self._header_avatar.setText(avatar_text)
-        self._header_avatar.setStyleSheet(f"""
-            font-size: 24px; font-weight: 600; color: white;
-            border-radius: 24px; background-color: {color};
-        """)
-
-        # 在线状态
-        online_ids = {u.get("user_id") for u in self.state.online_users}
-        is_online = uid in online_ids
-        self._online_status_label.setText("在线" if is_online else "离线")
-        self._online_status_label.setStyleSheet(
-            f"font-size: 24px; font-weight: 600; color: {'#34D399' if is_online else '#94A3B8'}; background: transparent;"
-        )
-        self._online_status_label.show()
-
-        # 设置按钮隐藏（私聊没有群设置）
-        self._settings_btn.hide()
-
-        # 子标题：班级信息 + 加密
-        desc = "端对端加密已启用"
-        for f in (self.state.friends or []):
-            if f.get("user_id") == uid:
-                cls = f.get("class_name", "")
-                if cls:
-                    desc = f"{cls} · {desc}"
-                break
-        self._chat_subtitle.setText(desc)
-        self._chat_subtitle.show()
-
-        # 加密标识隐藏
-        self._encryption_badge.hide()
-        self._members_btn.hide()
-
-    def _select_room(self):
-        """默认选中第一个群聊（公共聊天室优先）"""
-        for g in self._my_groups:
-            if g["group_id"] == PUBLIC_ROOM_ID:
-                display_name = g.get("remark") or g["group_name"]
-                self._on_contact_selected({"id": g["group_id"], "name": display_name, "type": "room"})
-                return
-        if self._my_groups:
-            g = self._my_groups[0]
-            display_name = g.get("remark") or g["group_name"]
-            self._on_contact_selected({"id": g["group_id"], "name": display_name, "type": "room"})
-            return
-
-    def _on_open_settings(self):
-        """打开群设置对话框"""
-        if not self._current_target or self._current_target["type"] != "room":
-            return
-        dlg = GroupSettingsDialog(
-            self.app,
-            self._current_target["id"],
-            self._current_target["name"],
-            self,
-        )
-        dlg.exec_()
-
-    def _on_group_name_updated(self, msg):
-        """收到群名变更广播 — 更新本地缓存的群名（用户设置了备注则不覆盖）"""
-        group_id = msg.get("group_id", "")
-        new_name = msg.get("group_name", "")
-        if not group_id or not new_name:
-            return
-
-        # 更新 _my_groups 中的缓存
-        has_remark = False
-        for g in self._my_groups:
-            if g["group_id"] == group_id:
-                has_remark = bool(g.get("remark"))
-                g["group_name"] = new_name   # 始终更新原始群名
-                break
-
-        # 如果正在查看该群聊，更新标题（备注优先）
-        if (self._current_target
-                and self._current_target["type"] == "room"
-                and self._current_target["id"] == group_id):
-            if not has_remark:
-                self._current_target["name"] = new_name
-                self._chat_title.setText(new_name)
-
-        # 刷新左侧列表
-        self._refresh_conv_list()
-
-    # ==================== 群成员弹窗 ====================
-
-    def _on_members_btn(self):
-        """点击👥成员按钮 — 请求群成员列表"""
-        if not self._current_target or self._current_target["type"] != "room":
-            return
-        group_id = self._current_target["id"]
-        self._pending_members_group = group_id
-        self.net.send({"type": MT.GROUP_MEMBERS, "group_id": group_id})
-
-    def _on_group_members_resp(self, msg):
-        """收到群成员列表响应 — 显示成员弹窗"""
-        group_id = msg.get("group_id", "")
-        if group_id != self._pending_members_group:
-            return
-        self._pending_members_group = None
-
-        members = msg.get("members", [])
-        group_name = msg.get("group_name", "")
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"群成员 - {group_name}")
-        dialog.setFixedSize(360, 460)
-        dialog.setStyleSheet("""
-            QDialog { background-color: #F7F9FD; border-radius: 16px; }
-        """)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(12)
-
-        title = QLabel(f"👥  {group_name}  ({len(members)} 人)")
-        title.setStyleSheet("font-size: 24px; font-weight: 800; color: #1E293B;")
-        layout.addWidget(title)
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet("""
-            QScrollArea { border: none; background: transparent; }
-            QScrollBar:vertical { width: 6px; }
-            QScrollBar::handle:vertical { background: rgba(100,116,139,0.22); border-radius: 6px; }
-        """)
-
-        content = QWidget()
-        content.setStyleSheet("background: transparent;")
-        member_layout = QVBoxLayout(content)
-        member_layout.setContentsMargins(0, 0, 0, 0)
-        member_layout.setSpacing(6)
-        member_layout.setAlignment(Qt.AlignTop)
-
-        current_user_id = self.state.user_id
-        for m in members:
-            mid = m.get("user_id", 0)
-            mname = m.get("remark") or m.get("nickname") or m.get("username", f"用户{mid}")
-            is_me = mid == current_user_id
-            role = m.get("role", 0)
-            online = m.get("online", False)
-
-            card = QFrame()
-            card.setFixedHeight(60)
-            card.setStyleSheet("""
-                QFrame { background-color: #fff; border-radius: 14px; }
-            """)
-            row = QHBoxLayout(card)
-            row.setContentsMargins(14, 10, 14, 10)
-            row.setSpacing(12)
-
-            avatar = self._create_avatar(40, mname[0] if mname else "?",
-                                          _AVATAR_COLORS[mid % len(_AVATAR_COLORS)])
-            row.addWidget(avatar)
-
-            text_col = QVBoxLayout()
-            text_col.setSpacing(2)
-
-            name_row = QHBoxLayout()
-            name_row.setSpacing(6)
-            name_label = QLabel(f"{mname}{' (我)' if is_me else ''}")
-            name_label.setStyleSheet("font-size: 24px; font-weight: 600; color: #1E293B; background: transparent;")
-            name_row.addWidget(name_label)
-
-            if role == 1:
-                role_label = QLabel("管理员")
-                role_label.setStyleSheet("""
-                    font-size: 24px; font-weight: 700; color: #2D6CF6;
-                    background: #E7EFFC; padding: 1px 7px; border-radius: 6px;
-                """)
-                name_row.addWidget(role_label)
-            elif m.get("user_id") == self.state.user_id:
-                pass  # 自己显示"我"标签就够了
-            else:
-                pass
-
-            name_row.addStretch()
-            text_col.addLayout(name_row)
-
-            status_label = QLabel("🟢 在线" if online else "⚪ 离线")
-            status_label.setStyleSheet(
-                f"font-size: 24px; color: {'#34D399' if online else '#94A3B8'}; background: transparent;")
-            text_col.addWidget(status_label)
-
-            row.addLayout(text_col, 1)
-            member_layout.addWidget(card)
-
-        scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
-
-        close_btn = QPushButton("关闭")
-        close_btn.setFixedHeight(48)
-        close_btn.setCursor(Qt.PointingHandCursor)
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background: #fff; color: #94A3B8; border: 1px solid #E5EAF3;
-                border-radius: 14px; font-size: 24px;
-            }
-            QPushButton:hover { background: #F7F9FD; color: #64748B; }
-        """)
-        close_btn.clicked.connect(dialog.accept)
-        layout.addWidget(close_btn)
-
-        dialog.exec_()
-
-    # ==================== 更多菜单 ====================
-
-    def _on_more_btn(self):
-        """点击⋯更多按钮 — 弹出操作菜单"""
-        menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #fff; border: 1px solid #E5EAF3;
-                border-radius: 12px; padding: 6px;
-                font-size: 24px; color: #1E293B;
-            }
-            QMenu::item {
-                padding: 10px 20px; border-radius: 8px;
-            }
-            QMenu::item:selected { background-color: #F1F5FB; }
-        """)
-
-        if self._current_target:
-            target = self._current_target
-            # 复制名称
-            copy_action = QAction(f"📋 复制 {target['name']}", self)
-            copy_action.triggered.connect(lambda: self._copy_to_clipboard(target["name"]))
-            menu.addAction(copy_action)
-
-            if target["type"] == "p2p":
-                # 查看好友信息
-                info_action = QAction("ℹ️ 好友信息", self)
-                info_action.triggered.connect(lambda: self._show_friend_info(target))
-                menu.addAction(info_action)
-
-                # 删除好友
-                delete_action = QAction("🗑️ 删除好友", self)
-                delete_action.triggered.connect(lambda: self._on_remove_friend())
-                menu.addAction(delete_action)
-            else:
-                # 群聊信息
-                info_action = QAction("ℹ️ 群聊信息", self)
-                info_action.triggered.connect(self._on_open_settings)
-                menu.addAction(info_action)
-
-        menu.exec_(self._more_btn.mapToGlobal(
-            self._more_btn.rect().bottomLeft()))
-
-    def _copy_to_clipboard(self, text):
-        """复制文本到剪贴板"""
-        from PyQt5.QtWidgets import QApplication
-        QApplication.clipboard().setText(text)
-
-    def _show_friend_info(self, target):
-        """显示好友信息"""
-        QMessageBox.information(self, "好友信息",
-                                f"用户名: {target['name']}\nID: {target['id']}")
-
-    # ==================== 删除好友 ====================
-
-    def _on_remove_friend(self):
-        """删除好友（发送请求并确认）"""
-        if not self._current_target or self._current_target["type"] != "p2p":
-            return
-        target = self._current_target
-        reply = QMessageBox.question(
-            self, "确认删除",
-            f"确定要删除好友 {target['name']} 吗？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No,
-        )
-        if reply == QMessageBox.Yes:
-            self.net.send({
-                "type": MT.FRIEND_REMOVE,
-                "friend_id": target["id"],
-            })
-
-    def _on_friend_remove_resp(self, msg):
-        """收到删除好友响应"""
-        if msg.get("ok"):
-            # 刷新好友列表
-            self.net.send({"type": MT.FRIEND_LIST})
-            # 如果当前正在和该好友聊天，清空聊天区域
-            if self._current_target and self._current_target["type"] == "p2p":
-                self._current_target = None
-                self._clear_messages()
-                self._info_panel.hide()
+    def _load_history(self, target):
+        if target["type"] == "p2p":
+            self.net.send({"type": MT.HISTORY_REQ, "scope": "p2p", "target": target["id"], "token": self._history_token})
         else:
-            QMessageBox.warning(self, "删除失败", msg.get("reason", "删除好友失败"))
+            self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": target["id"], "token": self._history_token})
 
-    # ==================== 消息收发 ====================
+    # ═══════════════════════════════════════════════════
+    #  发送
+    # ═══════════════════════════════════════════════════
 
-    def _send_message(self):
-        """发送消息"""
-        if not self._current_target:
+    def _on_send(self):
+        text = self._input.toPlainText().strip()
+        if not text or not self._current_target:
             return
-
-        text = self._text_input.text().strip()
-        if not text:
-            return
-
-        encrypted = self.app.crypto.encrypt(text)
+        self._input.clear()
+        self._input.setFixedHeight(56)
+        t = self._current_target
         ts = int(time.time())
-        target = self._current_target
-        key = f"{target['type']}_{target['id']}"
-
-        if target["type"] == "room":
-            self.net.send({"type": MT.ROOM_CHAT, "room_id": target["id"], "content": encrypted, "ts": ts})
+        try:
+            encrypted = self.app.crypto.encrypt(text)
+        except Exception:
+            encrypted = text
+        if t["type"] == "p2p":
+            self.net.send({"type": MT.CHAT, "to": t["id"], "content": encrypted, "ts": ts})
         else:
-            self.net.send({"type": MT.CHAT, "to": target["id"], "content": encrypted, "ts": ts})
+            self.net.send({"type": MT.ROOM_CHAT, "room_id": t["id"], "content": encrypted, "ts": ts})
+        self._append_msg(text, ts, True)
+        key = self._conv_key(t)
+        self._last_previews[key] = text[:28]
+        self._last_times[key] = self._fmt_time(ts)
+        self._refresh_list()
 
-        # 更新左侧列表的预览和时间
-        preview_text = (text[:28] + "…") if len(text) > 28 else text
-        if target["type"] == "room":
-            self._last_msg_previews[key] = f"我: {preview_text}"
-        else:
-            self._last_msg_previews[key] = preview_text
-        self._last_msg_times[key] = ts
-        self._refresh_conv_list()
-
-        self._append_msg_bubble("我", text, "", is_self=True)
-        self._text_input.clear()
+    # ═══════════════════════════════════════════════════
+    #  接收
+    # ═══════════════════════════════════════════════════
 
     def _on_chat(self, msg):
-        """收到私聊消息"""
-        sender_id = msg.get("from")
-        if sender_id == self.state.user_id:
+        sender = msg.get("from", 0)
+        if int(sender) == int(self.state.user_id or -1):
             return
-        plain = self.app.crypto.decrypt(msg.get("content", ""))
-        ts = msg.get("ts", "")
-        sender_name = self._find_user_name(sender_id)
-
-        # 判断是否正在查看该对话
-        viewing = (self._current_target and
-                   self._current_target["type"] == "p2p" and
-                   self._current_target["id"] == sender_id)
-
-        # 更新预览和时间（无论是否正在查看）
-        key = f"p2p_{sender_id}"
-        preview = (plain[:28] + "…") if len(plain) > 28 else plain
-        self._last_msg_previews[key] = preview
-        self._last_msg_times[key] = ts or int(time.time())
-
-        if viewing:
-            self._append_msg_bubble(sender_name, plain, str(ts))
-            # 在底部则自动滚到底，否则显示「新消息」提示
-            if self._is_at_bottom():
-                self._scroll_to_bottom()
-            else:
-                self._new_msg_hint.show()
-            self._refresh_conv_list()  # 刷新左侧预览
+        try:
+            plain = self.app.crypto.decrypt(msg["content"])
+        except Exception:
+            plain = msg.get("content", "")
+        key = f"p2p_{sender}"
+        self._last_previews[key] = plain[:28]
+        self._last_times[key] = self._fmt_time(int(time.time()))
+        if self._current_target and self._conv_key(self._current_target) == key:
+            self._unread.pop(key, None)
+            name = self._find_name(sender)
+            self._append_msg(plain, int(time.time()), False, sender_name=name)
         else:
-            self._unread_counts[key] = self._unread_counts.get(key, 0) + 1
-            self._refresh_conv_list()
+            self._unread[key] = self._unread.get(key, 0) + 1
+        self._refresh_list()
 
     def _on_room_chat(self, msg):
-        """收到群聊消息，按 room_id 路由"""
-        sender_id = msg.get("from")
-        if sender_id == self.state.user_id:
-            return
+        sender = msg.get("from", 0)
         room_id = msg.get("room_id", 0)
-        if not room_id:
+        if int(sender) == int(self.state.user_id or -1):
             return
-
-        plain = self.app.crypto.decrypt(msg.get("content", ""))
-        ts = msg.get("ts", "")
-        key = f"room_{room_id}"
-
-        # 如果收到的群聊消息来自一个尚未加载的群，主动获取列表
-        if not any(g["group_id"] == room_id for g in self._my_groups):
+        if int(sender) == 0:
+            try:
+                sys_plain = self.app.crypto.decrypt(msg.get("content", ""))
+            except Exception:
+                sys_plain = msg.get("content", "")
+            self._append_sys_msg(sys_plain)
+            return
+        # 陌生群聊 → 自动拉取群列表
+        if room_id != PUBLIC_ROOM_ID and not any(g.get("group_id") == room_id for g in self._my_groups):
             self.net.send({"type": MT.GROUP_LIST})
-
-        # 系统消息（from=0，如群名变更通知）
-        if sender_id == 0:
-            self._last_msg_previews[key] = plain
-            self._last_msg_times[key] = ts or int(time.time())
-            viewing = (
-                self._current_target
-                and self._current_target["type"] == "room"
-                and self._current_target["id"] == room_id
-            )
-            if viewing:
-                self._append_system_msg(plain)
-                if self._is_at_bottom():
-                    self._scroll_to_bottom()
-                else:
-                    self._new_msg_hint.show()
-            self._refresh_conv_list()
-            return
-
-        sender_name = self._find_user_name(sender_id)
-
-        # 更新对应群聊的预览和时间
-        preview = (plain[:28] + "…") if len(plain) > 28 else plain
-        self._last_msg_previews[key] = f"{sender_name}: {preview}"
-        self._last_msg_times[key] = ts or int(time.time())
-
-        viewing_this_room = (
-            self._current_target
-            and self._current_target["type"] == "room"
-            and self._current_target["id"] == room_id
-        )
-        if viewing_this_room:
-            self._append_msg_bubble(sender_name, plain, str(ts))
-            if self._is_at_bottom():
-                self._scroll_to_bottom()
-            else:
-                self._new_msg_hint.show()
-            self._refresh_conv_list()  # 刷新左侧预览
+        try:
+            plain = self.app.crypto.decrypt(msg["content"])
+        except Exception:
+            plain = msg.get("content", "")
+        key = f"room_{room_id}"
+        name = self._find_name(sender)
+        self._last_previews[key] = f"{name}: {plain[:20]}"
+        self._last_times[key] = self._fmt_time(int(time.time()))
+        if self._current_target and self._conv_key(self._current_target) == key:
+            self._unread.pop(key, None)
+            self._append_msg(plain, int(time.time()), False, sender_name=name)
         else:
-            self._unread_counts[key] = self._unread_counts.get(key, 0) + 1
-            self._refresh_conv_list()
+            self._unread[key] = self._unread.get(key, 0) + 1
+        self._refresh_list()
 
-    def _on_user_list(self, msg):
-        """在线列表更新"""
-        self.state.online_users = msg.get("online_users", [])
-        self._refresh_conv_list()
-        # 更新当前聊天头部的在线状态
-        if self._current_target:
-            if self._current_target["type"] == "p2p":
-                self._update_chat_header_for_p2p(self._current_target)
-                self._update_info_panel()
-            else:
-                self._update_chat_header_for_group(self._current_target)
-
-    # ==================== 历史记录 ====================
-
-    def _load_history(self):
-        """加载历史记录"""
-        if not self._current_target:
-            return
-        t = self._current_target
-        if t["type"] == "room":
-            self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": t["id"]})
-        else:
-            self.net.send({"type": MT.HISTORY_REQ, "scope": "p2p", "target": t["id"]})
+    # ═══════════════════════════════════════════════════
+    #  历史
+    # ═══════════════════════════════════════════════════
 
     def _on_history(self, msg):
-        """收到历史记录响应"""
-        records = msg.get("records", [])
-        self._clear_messages()
-        if not records:
-            self._append_system_msg("暂无聊天记录")
+        token = msg.get("token", 0)
+        # token=0 是预览请求，更新预览文字后刷新列表
+        if token == 0:
+            records = msg.get("records", [])
+            if records:
+                last = records[-1]
+                try:
+                    content = self.app.crypto.decrypt(last.get("content", ""))
+                except Exception:
+                    content = last.get("content", "")
+                preview = content[:28]
+                ts_str = last.get("sent_at", "")
+                try:
+                    from datetime import datetime as dt
+                    ts_dt = dt.strptime(str(ts_str)[:19], "%Y-%m-%d %H:%M:%S")
+                    ts_val = int(ts_dt.timestamp())
+                except Exception:
+                    ts_val = 0
+                scope = msg.get("scope", "")
+                if scope == "p2p":
+                    key = f"p2p_{msg.get('target', 0)}"
+                    self._last_previews[key] = preview
+                    self._last_times[key] = self._fmt_time(ts_val) if ts_val else ""
+                elif scope == "room":
+                    key = f"room_{msg.get('room_id', 0)}"
+                    self._last_previews[key] = preview
+                    self._last_times[key] = self._fmt_time(ts_val) if ts_val else ""
+            self._refresh_list()
             return
 
+        if token != self._history_token:
+            return
+        self._clear_messages()
+        records = msg.get("records", [])
+        if not records:
+            self._append_sys_msg("暂无聊天记录")
+            return
+        # 同步最新预览
+        last = records[-1]
+        try:
+            lp = self.app.crypto.decrypt(last.get("content", ""))
+        except Exception:
+            lp = last.get("content", "")
+        scope = msg.get("scope", "")
+        if scope == "p2p":
+            pk = f"p2p_{msg.get('target', 0)}"
+        else:
+            pk = f"room_{msg.get('room_id', 0)}"
+        self._last_previews[pk] = lp[:28]
+        self._last_times[pk] = self._fmt_time(int(time.time()))
         for r in records:
-            plain = self.app.crypto.decrypt(r.get("content", ""))
-            sender_id = r.get("from")
-            ts = r.get("ts", "")
-            # 系统消息（from=0）
-            if sender_id == 0:
-                self._append_system_msg(plain)
-                continue
-            is_self = (sender_id == self.state.user_id)
-            sender_name = "我" if is_self else self._find_user_name(sender_id)
-            self._append_msg_bubble(sender_name, plain, ts, is_self)
+            is_self = int(r.get("sender_id", 0)) == int(self.state.user_id or -1)
+            try:
+                content = self.app.crypto.decrypt(r.get("content", ""))
+            except Exception:
+                content = r.get("content", "")
+            ts_str = r.get("sent_at", 0)
+            try:
+                ts = int(ts_str) if ts_str else int(time.time())
+            except (ValueError, TypeError):
+                ts = int(time.time())
+            name = ""
+            if not is_self:
+                name = self._find_name(r.get("sender_id", 0))
+            self._append_msg(content, ts, is_self, sender_name=name)
+        self._scroll_bottom()
 
-        self._scroll.verticalScrollBar().setValue(
-            self._scroll.verticalScrollBar().maximum()
-        )
+    # ═══════════════════════════════════════════════════
+    #  创建群聊
+    # ═══════════════════════════════════════════════════
 
-    # ==================== 消息气泡 ====================
+    def _show_create_group_dialog(self):
+        friends = self.state.friends or []
+        if not friends:
+            QMessageBox.information(self, "提示", "请先添加好友")
+            return
 
-    def _clear_messages(self):
-        """清空消息区域"""
-        while self._msg_layout.count():
-            item = self._msg_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+        dlg = QDialog(self)
+        dlg.setWindowTitle("创建群聊")
+        dlg.setFixedSize(560, 640)
+        dlg.setStyleSheet(f"background:{C_WHITE};border-radius:24px;")
 
-    def _append_msg_bubble(self, sender_name, content, ts="", is_self=False):
-        """添加消息气泡（对齐设计稿：圆角风格 5px→18px）"""
-        container = QWidget()
-        container.setStyleSheet("background: transparent;")
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(13)
+        lo = QVBoxLayout(dlg)
+        lo.setContentsMargins(36, 36, 36, 32)
+        lo.setSpacing(24)
+
+        # 标题
+        title = QLabel("创建群聊")
+        title.setStyleSheet(f"font-size:32px;font-weight:800;color:{C_DARK};")
+        lo.addWidget(title)
+
+        desc = QLabel("选择至少 2 位好友，发起群聊")
+        desc.setStyleSheet(f"font-size:20px;color:{C_SUBTLE};")
+        lo.addWidget(desc)
+
+        # 群名称
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("输入群聊名称")
+        name_input.setFixedHeight(56)
+        name_input.setStyleSheet(
+            f"background:{C_BG};border:2px solid {C_BORDER};border-radius:14px;font-size:24px;padding:0 18px;color:{C_DARK};")
+        lo.addWidget(name_input)
+
+        # 成员选择框（仿文件页接收人下拉样式）
+        picker = QFrame()
+        picker.setStyleSheet(f"QFrame{{background:{C_CARD};border:2px solid {C_BORDER};border-radius:16px;}}")
+        pl = QVBoxLayout(picker)
+        pl.setContentsMargins(14, 14, 14, 14)
+        pl.setSpacing(10)
+
+        # 搜索 + 全选按钮行
+        top_row = QHBoxLayout()
+        top_row.setSpacing(10)
+        group_search = QLineEdit()
+        group_search.setPlaceholderText("🔍 搜索好友…")
+        group_search.setFixedHeight(50)
+        group_search.setStyleSheet(f"background:{C_BG};border:none;border-radius:14px;font-size:22px;color:{C_DARK};padding:0 18px;")
+        group_search.textChanged.connect(lambda t: [
+            lst.item(i).setHidden(t.strip().lower() not in lst.item(i).text().lower())
+            for i in range(lst.count())
+        ])
+        top_row.addWidget(group_search, 1)
+
+        sel_all = QPushButton("全选")
+        sel_all.setFixedHeight(50)
+        sel_all.setCursor(Qt.PointingHandCursor)
+        sel_all.setStyleSheet(f"QPushButton{{background:{C_BG};border:none;border-radius:14px;font-size:20px;font-weight:600;color:{C_PRIMARY};padding:0 14px;}}"
+                               f"QPushButton:hover{{background:{C_BLUE_BG};}}")
+        sel_all.clicked.connect(lambda: [lst.item(i).setCheckState(Qt.Checked) for i in range(lst.count())])
+        top_row.addWidget(sel_all)
+        desel = QPushButton("取消")
+        desel.setFixedHeight(50)
+        desel.setCursor(Qt.PointingHandCursor)
+        desel.setStyleSheet(f"QPushButton{{background:{C_BG};border:none;border-radius:14px;font-size:20px;color:{C_SUBTLE};padding:0 14px;}}"
+                             f"QPushButton:hover{{background:{C_BLUE_BG};}}")
+        desel.clicked.connect(lambda: [lst.item(i).setCheckState(Qt.Unchecked) for i in range(lst.count())])
+        top_row.addWidget(desel)
+        pl.addLayout(top_row)
+
+        # 滚动列表
+        lsc = QScrollArea()
+        lsc.setWidgetResizable(True)
+        lsc.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        lsc.setFrameShape(QFrame.NoFrame)
+        lsc.setStyleSheet("QScrollArea{background:transparent;border:none;}"
+                          "QScrollBar:vertical{width:6px;background:transparent;}"
+                          "QScrollBar::handle:vertical{background:#CBD5E1;border-radius:3px;}")
+        lst = QListWidget()
+        lst.setSelectionMode(QListWidget.NoSelection)
+        lst.setStyleSheet(
+            f"QListWidget{{background:transparent;border:none;font-size:22px;}}"
+            "QListWidget::item{padding:14px 12px;border-bottom:1px solid #F0F2F5;}"
+            "QListWidget::indicator{{width:22px;height:22px;}}")
+        for f in friends:
+            name = f.get("remark") or f["username"]
+            item = QListWidgetItem("  " + name)
+            item.setData(Qt.UserRole, f["user_id"])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            lst.addItem(item)
+        lsc.setWidget(lst)
+        # 点击整行切换勾选
+        lst.itemClicked.connect(lambda item: item.setCheckState(
+            Qt.Unchecked if item.checkState() == Qt.Checked else Qt.Checked))
+        pl.addWidget(lsc, 1)
+        lo.addWidget(picker, 1)
+
+        # 按钮行
+        br = QHBoxLayout()
+        br.setSpacing(20)
+        cancel = QPushButton("取消")
+        cancel.setFixedHeight(56)
+        cancel.setCursor(Qt.PointingHandCursor)
+        cancel.setStyleSheet(f"QPushButton{{background:{C_BG};color:{C_MUTED};border:none;border-radius:14px;font-size:24px;padding:0 28px;}}"
+                             f"QPushButton:hover{{background:#E2E8F0;}}")
+        cancel.clicked.connect(dlg.reject)
+        br.addWidget(cancel)
+        br.addStretch()
+
+        confirm = QPushButton("创建群聊")
+        confirm.setFixedHeight(56)
+        confirm.setCursor(Qt.PointingHandCursor)
+        confirm.setStyleSheet(f"QPushButton{{background:{C_BLUE_GRAD};color:white;border:none;border-radius:14px;font-size:24px;font-weight:700;padding:0 32px;}}"
+                              f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #3B7FED,stop:1 #1D5CE6);}}")
+        confirm.clicked.connect(lambda: self._do_create_group(dlg, lst, name_input.text().strip()))
+        br.addWidget(confirm)
+        lo.addLayout(br)
+
+        dlg.exec_()
+
+    def _do_create_group(self, dlg, lst, group_name):
+        selected = []
+        for i in range(lst.count()):
+            item = lst.item(i)
+            if item.checkState() == Qt.Checked:
+                selected.append(item.data(Qt.UserRole))
+        if len(selected) < 2:
+            QMessageBox.warning(self, "提示", "请至少选择 2 位好友")
+            return
+        self.net.send({"type": MT.GROUP_CREATE, "group_name": group_name or "新建群聊", "invitees": selected})
+        dlg.accept()
+
+    def _on_group_create_resp(self, msg):
+        if msg.get("ok"):
+            self.net.send({"type": MT.GROUP_LIST})
+        else:
+            QMessageBox.warning(self, "创建失败", msg.get("reason", "未知错误"))
+
+    # ═══════════════════════════════════════════════════
+    #  群聊其他
+    # ═══════════════════════════════════════════════════
+
+    def _on_group_list(self, msg):
+        self._my_groups = msg.get("my_groups", [])
+        self._refresh_list()
+        # 加载公共聊天室和每个群的最新消息作为预览
+        self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": PUBLIC_ROOM_ID, "limit": 1, "token": 0})
+        for g in self._my_groups:
+            self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": g["group_id"], "limit": 1, "token": 0})
+
+    def _on_group_join(self, msg):
+        if msg.get("ok"):
+            self.net.send({"type": MT.GROUP_LIST})
+
+    def _on_group_name_update(self, msg):
+        gid = msg.get("group_id")
+        for g in self._my_groups:
+            if g["group_id"] == gid:
+                g["group_name"] = msg.get("group_name", g.get("group_name", ""))
+        if self._current_target and self._current_target.get("id") == gid:
+            self._set_chat_header(msg.get("group_name", msg.get("name", "")), "")
+        self._refresh_list()
+
+    def _on_group_members(self, msg):
+        members = msg.get("members", [])
+        gid = msg.get("group_id", 0)
+        self._group_members_cache[gid] = members
+
+    def _on_group_invite(self, msg):
+        self.net.send({"type": MT.GROUP_LIST})
+
+    def _show_group_settings(self):
+        if not self._current_target or self._current_target.get("type") != "room":
+            return
+        gid = self._current_target["id"]
+        gname = self._current_target.get("name", "")
+        is_public = gid == PUBLIC_ROOM_ID
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("群聊设置")
+        dlg.setFixedSize(520, 640)
+        # 先请求最新成员列表，等响应到达后再填充
+        self._group_members_cache.pop(gid, None)
+        self.net.send({"type": MT.GROUP_MEMBERS, "group_id": gid})
+        lo = QVBoxLayout(dlg)
+        lo.setContentsMargins(32, 32, 32, 28)
+        lo.setSpacing(28)
+
+        # 标题
+        t = QLabel("群聊设置")
+        t.setStyleSheet(f"font-size:28px;font-weight:800;color:{C_DARK};")
+        lo.addWidget(t)
+
+        # ── 修改群名称 ──
+        nl = QLabel("修改群名称")
+        nl.setStyleSheet(f"font-size:22px;font-weight:600;color:{C_MUTED};")
+        lo.addWidget(nl)
+        name_row = QHBoxLayout()
+        name_row.setSpacing(16)
+        name_input = QLineEdit()
+        name_input.setPlaceholderText("新群聊名称")
+        name_input.setText(gname)
+        name_input.setFixedHeight(52)
+        name_input.setStyleSheet(f"background:{C_BG};border:2px solid {C_BORDER};border-radius:14px;font-size:22px;padding:0 16px;color:{C_DARK};")
+        name_row.addWidget(name_input, 1)
+        rename_btn = QPushButton("修改")
+        rename_btn.setFixedHeight(52)
+        rename_btn.setCursor(Qt.PointingHandCursor)
+        rename_btn.setStyleSheet(f"QPushButton{{background:{C_BLUE_GRAD};color:white;border:none;border-radius:14px;font-size:22px;font-weight:700;padding:0 24px;}}"
+                                  f"QPushButton:hover{{background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #3B7FED,stop:1 #1D5CE6);}}")
+        rename_btn.clicked.connect(lambda: (
+            self.net.send({"type": MT.GROUP_UPDATE_NAME, "group_id": gid, "group_name": name_input.text().strip()}),
+            dlg.accept()))
+        name_row.addWidget(rename_btn)
+        lo.addLayout(name_row)
+
+        # ── 成员列表 ──
+        ml = QLabel("群成员")
+        ml.setStyleSheet(f"font-size:24px;font-weight:700;color:{C_DARK};")
+        lo.addWidget(ml)
+
+        members_scroll = QScrollArea()
+        members_scroll.setWidgetResizable(True)
+        members_scroll.setFrameShape(QFrame.NoFrame)
+        members_scroll.setStyleSheet("QScrollArea{background:transparent;border:none;}"
+                                     "QScrollBar:vertical{width:6px;background:transparent;}"
+                                     "QScrollBar::handle:vertical{background:#CBD5E1;border-radius:3px;}")
+        members_w = QWidget()
+        members_l = QVBoxLayout(members_w)
+        members_l.setContentsMargins(0, 0, 0, 0)
+        members_l.setSpacing(10)
+        members_l.setAlignment(Qt.AlignTop)
+
+        # 延迟填充成员（等服务器响应）
+        def fill_members():
+            members = self._group_members_cache.get(gid, [])
+            if not members:
+                empty = QLabel("暂无成员信息")
+                empty.setStyleSheet(f"font-size:20px;color:{C_SUBTLE};background:transparent;padding:20px 0;")
+                empty.setAlignment(Qt.AlignCenter)
+                members_l.addWidget(empty)
+                return
+            for m in members:
+                row = QWidget()
+                row.setStyleSheet(f"background:{C_BG};border-radius:14px;")
+                rl2 = QHBoxLayout(row)
+                rl2.setContentsMargins(16, 14, 16, 14)
+                rl2.setSpacing(14)
+                av = QLabel((m.get("nickname") or m.get("username", "?"))[0])
+                av.setFixedSize(40, 40)
+                av.setAlignment(Qt.AlignCenter)
+                av.setStyleSheet(f"font-size:18px;font-weight:600;color:white;border-radius:20px;background:{_AVATAR_COLORS[hash(str(m.get('user_id',0))) % len(_AVATAR_COLORS)]};")
+                rl2.addWidget(av)
+                nm = QLabel(m.get("nickname") or m.get("username", ""))
+                nm.setStyleSheet(f"font-size:22px;color:{C_DARK};background:transparent;")
+                rl2.addWidget(nm, 1)
+                members_l.addWidget(row)
+        def try_fill():
+            if self._group_members_cache.get(gid):
+                fill_members()
+            else:
+                from PyQt5.QtCore import QTimer as QtTimer2
+                QtTimer2.singleShot(200, try_fill)
+        from PyQt5.QtCore import QTimer as QtTimer2
+        QtTimer2.singleShot(200, try_fill)
+        members_l.addStretch()
+        members_scroll.setWidget(members_w)
+        lo.addWidget(members_scroll, 1)
+
+        # ── 退出/删除群聊 ──
+        if not is_public:
+            leave_btn = QPushButton("退出群聊")
+            leave_btn.setFixedHeight(52)
+            leave_btn.setCursor(Qt.PointingHandCursor)
+            leave_btn.setStyleSheet(f"QPushButton{{background:#FFF1F2;color:{C_RED};border:1px solid #FECACA;border-radius:14px;font-size:22px;font-weight:600;}}"
+                                     f"QPushButton:hover{{background:#FEE2E2;}}")
+            leave_btn.clicked.connect(lambda: (
+                self.net.send({"type": MT.GROUP_REMOVE_MEMBER, "group_id": gid, "target_id": self.state.user_id}),
+                self.net.send({"type": MT.GROUP_LIST}),
+                dlg.accept(),
+                setattr(self, '_current_target', None) or self._set_chat_header("", "", None) or self._chat_hdr.hide() or self._clear_messages()))
+            lo.addWidget(leave_btn)
+
+        dlg.exec_()
+
+    def _show_members(self):
+        if self._current_target and self._current_target.get("type") == "room":
+            self.net.send({"type": MT.GROUP_MEMBERS, "group_id": self._current_target["id"]})
+
+    def _show_more_menu(self):
+        if not self._current_target or self._current_target.get("type") != "p2p":
+            return
+        menu = QMenu(self)
+        act = menu.addAction("删除好友")
+        act.triggered.connect(self._remove_friend)
+        menu.exec_(self.cursor().pos())
+
+    def _remove_friend(self):
+        if not self._current_target:
+            return
+        self.net.send({"type": MT.FRIEND_REMOVE, "friend_id": self._current_target["id"]})
+
+    # ═══════════════════════════════════════════════════
+    #  好友列表 & 在线状态
+    # ═══════════════════════════════════════════════════
+
+    def _on_friend_list(self, msg):
+        self.state.friends = msg.get("friends", [])
+        self._refresh_list()
+        # 加载每个好友的最新一条消息作为预览
+        for f in self.state.friends:
+            self.net.send({"type": MT.HISTORY_REQ, "scope": "p2p", "target": f["user_id"], "limit": 1, "token": 0})
+
+    def _on_friend_remove_resp(self, msg):
+        if msg.get("ok"):
+            self._current_target = None
+            self._clear_messages()
+            self._set_chat_header("校园通", "")
+            self.net.send({"type": MT.FRIEND_LIST})
+
+    def _on_user_list(self, msg):
+        had_friends = bool(self.state.friends)
+        self.state.online_users = msg.get("online_users", [])
+        self.state.all_users = msg.get("all_users", [])
+        # 首次收到在线列表时拉取好友和群聊
+        if not had_friends and self.state.user_id:
+            self._request_lists()
+        self._refresh_list()
+
+    # ═══════════════════════════════════════════════════
+    #  消息显示
+    # ═══════════════════════════════════════════════════
+
+    def _append_msg(self, text, ts, is_self, sender_name=""):
+        w = QWidget()
+        w.setStyleSheet("background:transparent;")
+        lo = QHBoxLayout(w)
+        lo.setContentsMargins(0, 0, 0, 0)
+        lo.setSpacing(20)
 
         if is_self:
-            layout.setDirection(QHBoxLayout.RightToLeft)
+            lo.addStretch()
 
-        # 圆形头像（42px）
-        avatar_text = sender_name[0] if sender_name else "?"
-        avatar = self._create_avatar(42, avatar_text, "#6366F1")
-        layout.addWidget(avatar)
+        if not is_self:
+            av_text = sender_name[0] if sender_name else "?"
+            av = QLabel(av_text)
+            av.setFixedSize(64, 64)
+            av.setAlignment(Qt.AlignCenter)
+            c = _AVATAR_COLORS[hash(sender_name) % len(_AVATAR_COLORS)] if sender_name else C_PRIMARY
+            av.setStyleSheet(f"font-size:30px;font-weight:600;color:white;border-radius:32px;background:{c};")
+            lo.addWidget(av)
 
         # 气泡列
-        bubble_col = QVBoxLayout()
-        bubble_col.setSpacing(6)
+        col_w = QWidget()
+        col_w.setStyleSheet("background:transparent;")
+        col = QVBoxLayout(col_w)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(10)
 
-        # 名字 · 时间（对方消息显示发送者，自己消息只显示时间）
+        info = QLabel()
         if is_self:
-            info_text = ts if ts else ""
+            info.setText(self._fmt_time(ts))
+            info.setAlignment(Qt.AlignRight)
         else:
-            info_text = f"{sender_name} · {ts}" if ts else sender_name
+            info.setText(f"{sender_name} · {self._fmt_time(ts)}" if sender_name else self._fmt_time(ts))
+        info.setStyleSheet(f"font-size:23px;color:{C_SUBTLE};")
+        col.addWidget(info)
 
-        if info_text:
-            info_label = QLabel(info_text)
-            info_label.setStyleSheet("""
-                font-size: 24px; color: #94A3B8; background: transparent;
-            """)
-            # 自己的消息时间右对齐
-            if is_self:
-                info_label.setAlignment(Qt.AlignRight)
-            bubble_col.addWidget(info_label)
-
-        # 气泡内容
-        bubble = QLabel(content)
+        bubble = QLabel(text)
         bubble.setWordWrap(True)
-        bubble.setMaximumWidth(520)
+        bubble.setMaximumWidth(1500)
         bubble.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
-        bubble.setContentsMargins(17, 13, 17, 13)
-
+        bubble.setTextFormat(Qt.PlainText)
         if is_self:
-            bubble.setStyleSheet("""
-                QLabel {
-                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                        stop:0 #4F8DFD, stop:1 #2D6CF6);
-                    color: white; border-radius: 18px;
-                    font-size: 24px; line-height: 1.6;
-                }
+            bubble.setStyleSheet(f"""
+                QLabel{{background:{C_BLUE_GRAD};color:white;border-radius:22px;
+                border-top-right-radius:6px;font-size:24px;padding:20px 27px;}}
             """)
+        else:
+            bubble.setStyleSheet(f"""
+                QLabel{{background:{C_WHITE};color:{C_DARK};border:1px solid {C_BLUE_BG};
+                border-radius:22px;border-top-left-radius:6px;font-size:24px;padding:20px 27px;}}
+            """)
+        col.addWidget(bubble)
 
-        bubble_col.addWidget(bubble, alignment=Qt.AlignLeft if not is_self else Qt.AlignRight)
-        layout.addLayout(bubble_col)
-        layout.addStretch()
+        lo.addWidget(col_w)
 
-        self._msg_layout.addWidget(container)
+        if not is_self:
+            lo.addStretch()
 
-    def _append_system_msg(self, text):
-        """添加系统提示"""
-        # 设计稿风格：居中灰底圆角标签
-        container = QWidget()
-        container.setStyleSheet("background: transparent;")
-        layout = QHBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setAlignment(Qt.AlignCenter)
+        self._msg_l.addWidget(w)
+        self._scroll_bottom()
 
-        label = QLabel(text)
-        label.setStyleSheet("""
-            font-size: 24px; color: #94A3B8;
-            background: #E2E8F2; padding: 6px 16px;
-            border-radius: 12px;
-        """)
-        layout.addWidget(label)
+    def _append_sys_msg(self, text):
+        l = QLabel(text)
+        l.setAlignment(Qt.AlignCenter)
+        l.setStyleSheet(f"font-size:22px;color:{C_SUBTLE};padding:8px 20px;")
+        self._msg_l.addWidget(l)
+        self._scroll_bottom()
 
-        self._msg_layout.addWidget(container)
+    def _clear_messages(self):
+        if hasattr(self, '_welcome') and self._welcome:
+            self._welcome.hide()
+        while self._msg_l.count():
+            it = self._msg_l.takeAt(0)
+            if it.widget() and it.widget() is not getattr(self, '_welcome', None):
+                it.widget().deleteLater()
+            elif it.spacerItem():
+                self._msg_l.removeItem(it)
 
-    def _find_user_name(self, user_id):
-        """根据用户ID查找显示名称（优先使用备注）"""
-        if user_id == self.state.user_id:
-            return self.state.username or "我"
-        # 1. 查好友列表中的备注
-        for f in (self.state.friends or []):
-            if f.get("user_id") == user_id:
-                return f.get("remark") or f.get("nickname") or f.get("username", f"用户{user_id}")
-        # 2. 查在线用户
-        for u in self.state.online_users:
-            if u.get("user_id") == user_id:
-                return u.get("nickname") or u.get("username", f"用户{user_id}")
-        return f"用户{user_id}"
+    def _scroll_bottom(self):
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(30, lambda: self._msg_scroll.verticalScrollBar().setValue(
+            self._msg_scroll.verticalScrollBar().maximum()))
 
-    # ==================== 滚动控制 ====================
+    # ═══════════════════════════════════════════════════
+    #  辅助
+    # ═══════════════════════════════════════════════════
 
-    def _is_at_bottom(self):
-        """判断是否在聊天区域最底部（有 30px 容差）"""
-        sb = self._scroll.verticalScrollBar()
-        return sb.maximum() - sb.value() < 30
+    def _fmt_time(self, ts):
+        from datetime import datetime
+        return datetime.fromtimestamp(ts).strftime("%H:%M")
 
-    def _scroll_to_bottom(self):
-        """滚到聊天区域最底部，隐藏新消息提示"""
-        sb = self._scroll.verticalScrollBar()
-        sb.setValue(sb.maximum())
-        self._new_msg_hint.hide()
-
-    def _on_chat_scrolled(self, value):
-        """滚动位置变化时，如果滚回底部则隐藏新消息提示"""
-        if self._is_at_bottom():
-            self._new_msg_hint.hide()
+    def _find_name(self, uid):
+        uid = int(uid)
+        for g in self._my_groups:
+            for m in g.get("members", []):
+                if m.get("user_id") == uid:
+                    return m.get("nickname") or m.get("username", f"用户{uid}")
+        for f in self.state.friends or []:
+            if f["user_id"] == uid:
+                return f.get("remark") or f["username"]
+        for u in self.state.all_users or []:
+            if u.get("user_id") == uid:
+                return u.get("nickname") or u.get("username", f"用户{uid}")
+        return f"用户{uid}"

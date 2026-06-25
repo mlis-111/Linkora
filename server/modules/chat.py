@@ -88,16 +88,15 @@ def handle_room_chat(session, msg):
         session.send(error("INVALID_PARAM", "消息内容不能为空"))
         return
 
-    # 校验群聊是否存在
-    group = ctx.db.groups.get_by_id(room_id)
-    if not group:
-        session.send(error("NOT_FOUND", "群聊不存在"))
-        return
-
-    # 校验发送方是否为群成员
-    if not ctx.db.groups.is_member(room_id, session.user_id):
-        session.send(error("NOT_MEMBER", "你不是该群成员"))
-        return
+    # 校验群聊是否存在（公共聊天室跳过成员校验）
+    if room_id != PUBLIC_ROOM_ID:
+        group = ctx.db.groups.get_by_id(room_id)
+        if not group:
+            session.send(error("NOT_FOUND", "群聊不存在"))
+            return
+        if not ctx.db.groups.is_member(room_id, session.user_id):
+            session.send(error("NOT_MEMBER", "你不是该群成员"))
+            return
 
     # 解密内容，入库
     plain_content = ctx.crypto.decrypt(cipher_content)
@@ -107,9 +106,12 @@ def handle_room_chat(session, msg):
     msg["from"] = session.user_id
     msg["ts"] = msg.get("ts", int(time.time()))
 
-    # 广播给群内所有在线成员
-    member_ids = ctx.db.groups.list_member_ids(room_id)
-    ctx.online.broadcast_to(msg, member_ids)
+    # 广播：公共聊天室发给所有人，群聊发给群成员
+    if room_id == PUBLIC_ROOM_ID:
+        ctx.online.broadcast(msg)
+    else:
+        member_ids = ctx.db.groups.list_member_ids(room_id)
+        ctx.online.broadcast_to(msg, member_ids)
 
 
 def handle_history(session, msg):
@@ -126,19 +128,20 @@ def handle_history(session, msg):
     scope = msg.get("scope", "")
     records = []
 
+    limit = msg.get("limit", 200)
+
     if scope == "p2p":
         # 私聊历史：查询当前用户与 target 之间的消息
         target_id = msg.get("target")
         if not target_id:
             session.send(error("INVALID_PARAM", "缺少查询目标"))
             return
-        rows = ctx.db.messages.query_p2p(session.user_id, target_id)
+        rows = ctx.db.messages.query_p2p(session.user_id, target_id, limit)
         for row in rows:
             records.append({
-                "from": row["sender_id"],
-                "to": row["receiver_id"],
+                "sender_id": row["sender_id"],
                 "content": ctx.crypto.encrypt(row["content"]),
-                "ts": str(row["sent_at"]) if row.get("sent_at") else "",
+                "sent_at": str(row["sent_at"]) if row.get("sent_at") else "",
             })
 
     elif scope == "room":
@@ -147,18 +150,23 @@ def handle_history(session, msg):
         rows = ctx.db.messages.query_room(room_id)
         for row in rows:
             records.append({
-                "from": row["sender_id"],
-                "to": row["receiver_id"] or 0,
+                "sender_id": row["sender_id"],
                 "content": ctx.crypto.encrypt(row["content"]),
-                "ts": str(row["sent_at"]) if row.get("sent_at") else "",
+                "sent_at": str(row["sent_at"]) if row.get("sent_at") else "",
             })
 
     else:
         session.send(error("INVALID_PARAM", f"不支持的查询范围: {scope}"))
         return
 
-    session.send({
+    resp = {
         "type": MT.HISTORY_RESP,
         "scope": scope,
         "records": records,
-    })
+        "token": msg.get("token", 0),
+    }
+    if scope == "p2p":
+        resp["target"] = target_id
+    elif scope == "room":
+        resp["room_id"] = room_id
+    session.send(resp)

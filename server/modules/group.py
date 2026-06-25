@@ -396,6 +396,18 @@ def _handle_remove_member(session, msg):
         session.send(error("FORBIDDEN", "不能移除群主"))
         return
 
+    # 自己退出（非管理员也可以）
+    if target_id == user_id:
+        ctx.db.groups.remove_member(group_id, user_id)
+        session.send({"type": MT.GROUP_REMOVE_MEMBER, "ok": True, "group_id": group_id, "target_id": user_id})
+        session.send({"type": MT.GROUP_LIST_RESP, "my_groups": ctx.db.groups.list_by_user(user_id), "available": ctx.db.groups.list_available(user_id)})
+        # 通知剩余群成员刷新
+        remaining = ctx.db.groups.list_member_ids(group_id)
+        for uid in remaining:
+            if ctx.online.is_online(uid):
+                ctx.online.send(uid, {"type": MT.GROUP_LIST_RESP, "my_groups": ctx.db.groups.list_by_user(uid), "available": ctx.db.groups.list_available(uid)})
+        return
+
     # 校验权限
     is_owner = group.get("owner_id") == user_id
     is_admin = ctx.db.groups.get_role(group_id, user_id) == 1

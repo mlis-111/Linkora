@@ -72,6 +72,7 @@ class LoginWindow(BasePanel):
         self.username_entry = QLineEdit()
         self.username_entry.setPlaceholderText("请输入用户名")
         self.username_entry.setFixedHeight(46)
+        self.username_entry.setAttribute(Qt.WA_InputMethodEnabled, False)
         self.username_entry.setStyleSheet("""
             QLineEdit {
                 background-color: #F7F9FD;
@@ -100,6 +101,7 @@ class LoginWindow(BasePanel):
         self.password_entry.setPlaceholderText("请输入密码")
         self.password_entry.setEchoMode(QLineEdit.Password)
         self.password_entry.setFixedHeight(46)
+        self.password_entry.setAttribute(Qt.WA_InputMethodEnabled, False)
         self.password_entry.setStyleSheet("""
             QLineEdit {
                 background-color: #F7F9FD;
