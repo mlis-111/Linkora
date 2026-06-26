@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (
     QListWidget, QListWidgetItem, QMessageBox, QTextEdit,
 )
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QPainter, QBrush, QPixmap
+from PyQt5.QtGui import QColor, QPainter, QBrush, QPixmap, QFontMetrics
 from client.core.base_panel import BasePanel
 from common.messages import MT, PUBLIC_ROOM_ID
 
@@ -617,12 +617,13 @@ class ChatPanel(BasePanel):
         except Exception:
             plain = msg.get("content", "")
         key = f"p2p_{sender}"
+        ts = msg.get("ts", int(time.time()))
         self._last_previews[key] = plain[:28]
-        self._last_times[key] = self._fmt_time(int(time.time()))
+        self._last_times[key] = self._fmt_time(ts)
         if self._current_target and self._conv_key(self._current_target) == key:
             self._unread.pop(key, None)
             name = self._find_name(sender)
-            self._append_msg(plain, int(time.time()), False, sender_name=name)
+            self._append_msg(plain, ts, False, sender_name=name)
         else:
             self._unread[key] = self._unread.get(key, 0) + 1
         self._refresh_list()
@@ -648,11 +649,12 @@ class ChatPanel(BasePanel):
             plain = msg.get("content", "")
         key = f"room_{room_id}"
         name = self._find_name(sender)
+        ts = msg.get("ts", int(time.time()))
         self._last_previews[key] = f"{name}: {plain[:20]}"
-        self._last_times[key] = self._fmt_time(int(time.time()))
+        self._last_times[key] = self._fmt_time(ts)
         if self._current_target and self._conv_key(self._current_target) == key:
             self._unread.pop(key, None)
-            self._append_msg(plain, int(time.time()), False, sender_name=name)
+            self._append_msg(plain, ts, False, sender_name=name)
         else:
             self._unread[key] = self._unread.get(key, 0) + 1
         self._refresh_list()
@@ -711,7 +713,18 @@ class ChatPanel(BasePanel):
         else:
             pk = f"room_{msg.get('room_id', 0)}"
         self._last_previews[pk] = lp[:28]
-        self._last_times[pk] = self._fmt_time(int(time.time()))
+        # 用最后一条记录的时间更新预览时间
+        last_ts_str = last.get("sent_at", 0)
+        try:
+            last_ts = int(last_ts_str) if last_ts_str else 0
+        except (ValueError, TypeError):
+            try:
+                from datetime import datetime as dt
+                last_ts_dt = dt.strptime(str(last_ts_str)[:19], "%Y-%m-%d %H:%M:%S")
+                last_ts = int(last_ts_dt.timestamp())
+            except Exception:
+                last_ts = 0
+        self._last_times[pk] = self._fmt_time(last_ts) if last_ts else ""
         for r in records:
             is_self = int(r.get("sender_id", 0)) == int(self.state.user_id or -1)
             try:
@@ -720,9 +733,14 @@ class ChatPanel(BasePanel):
                 content = r.get("content", "")
             ts_str = r.get("sent_at", 0)
             try:
-                ts = int(ts_str) if ts_str else int(time.time())
+                ts = int(ts_str) if ts_str else 0
             except (ValueError, TypeError):
-                ts = int(time.time())
+                try:
+                    from datetime import datetime as dt
+                    ts_dt = dt.strptime(str(ts_str)[:19], "%Y-%m-%d %H:%M:%S")
+                    ts = int(ts_dt.timestamp())
+                except Exception:
+                    ts = int(time.time())
             name = ""
             if not is_self:
                 name = self._find_name(r.get("sender_id", 0))
@@ -878,9 +896,9 @@ class ChatPanel(BasePanel):
         self._my_groups = msg.get("my_groups", [])
         self._refresh_list()
         # 加载公共聊天室和每个群的最新消息作为预览
-        self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": PUBLIC_ROOM_ID, "limit": 1, "token": 0})
+        self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": PUBLIC_ROOM_ID, "token": 0})
         for g in self._my_groups:
-            self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": g["group_id"], "limit": 1, "token": 0})
+            self.net.send({"type": MT.HISTORY_REQ, "scope": "room", "room_id": g["group_id"], "token": 0})
 
     def _on_group_join(self, msg):
         if msg.get("ok"):
@@ -1043,7 +1061,7 @@ class ChatPanel(BasePanel):
         self._refresh_list()
         # 加载每个好友的最新一条消息作为预览
         for f in self.state.friends:
-            self.net.send({"type": MT.HISTORY_REQ, "scope": "p2p", "target": f["user_id"], "limit": 1, "token": 0})
+            self.net.send({"type": MT.HISTORY_REQ, "scope": "p2p", "target": f["user_id"], "token": 0})
         # 如果当前正处在私聊界面，同步更新头部显示（备注变更后及时刷新）
         if self._current_target and self._current_target.get("type") == "p2p":
             fid = self._current_target["id"]
@@ -1110,21 +1128,30 @@ class ChatPanel(BasePanel):
         info.setStyleSheet(f"font-size:23px;color:{C_SUBTLE};")
         col.addWidget(info)
 
-        bubble = QLabel(text)
-        bubble.setWordWrap(True)
-        bubble.setMaximumWidth(1280 if is_self else 1360)
-        bubble.setTextFormat(Qt.PlainText)
         if is_self:
+            bubble = QLabel(text)
             bubble.setStyleSheet(f"""
                 QLabel{{background:{C_BLUE_GRAD};color:white;border-radius:22px;
                 border-top-right-radius:6px;font-size:24px;padding:20px 27px;}}
             """)
         else:
+            bubble = QLabel(text)
             bubble.setStyleSheet(f"""
                 QLabel{{background:{C_WHITE};color:{C_DARK};border:1px solid {C_BLUE_BG};
                 border-radius:22px;border-top-left-radius:6px;font-size:24px;padding:20px 27px;}}
             """)
-        # 用水平 layout + stretch 约束气泡宽度，与 AI 面板一致
+        bubble.setTextFormat(Qt.PlainText)
+        # 强制应用样式表，获取正确字体宽度
+        bubble.ensurePolished()
+        fm = QFontMetrics(bubble.font())
+        lines = text.split('\n')
+        text_w = max(fm.horizontalAdvance(l) for l in lines) if lines else 0
+        pad_w = 54   # padding 左右各 27px
+        margin = 20  # 渲染余量
+        max_w = 900  # 最大宽度
+        bubble.setFixedWidth(min(text_w + pad_w + margin, max_w))
+        bubble.setWordWrap(True)  # 固定宽度后再开换行
+        # 嵌套 HBoxLayout 右/左对齐气泡
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         if is_self:
