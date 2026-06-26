@@ -391,12 +391,7 @@ def _handle_remove_member(session, msg):
         session.send(error("NOT_FOUND", "群聊不存在"))
         return
 
-    # 不能移除群主
-    if target_id == group.get("owner_id"):
-        session.send(error("FORBIDDEN", "不能移除群主"))
-        return
-
-    # 自己退出（非管理员也可以）
+    # 自己退出（非管理员也可以，群主也可以退出）
     if target_id == user_id:
         ctx.db.groups.remove_member(group_id, user_id)
         session.send({"type": MT.GROUP_REMOVE_MEMBER, "ok": True, "group_id": group_id, "target_id": user_id})
@@ -406,6 +401,11 @@ def _handle_remove_member(session, msg):
         for uid in remaining:
             if ctx.online.is_online(uid):
                 ctx.online.send(uid, {"type": MT.GROUP_LIST_RESP, "my_groups": ctx.db.groups.list_by_user(uid), "available": ctx.db.groups.list_available(uid)})
+        return
+
+    # 不能移除群主（仅限他人操作）
+    if target_id == group.get("owner_id"):
+        session.send(error("FORBIDDEN", "不能移除群主"))
         return
 
     # 校验权限
