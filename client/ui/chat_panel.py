@@ -1030,7 +1030,8 @@ class ChatPanel(BasePanel):
                 self.net.send({"type": MT.GROUP_REMOVE_MEMBER, "group_id": gid, "target_id": self.state.user_id}),
                 self.net.send({"type": MT.GROUP_LIST}),
                 dlg.accept(),
-                setattr(self, '_current_target', None) or self._set_chat_header("", "", None) or self._chat_hdr.hide() or self._clear_messages()))
+                setattr(self, '_current_target', None) or self._set_chat_header("", "", None) or self._chat_hdr.hide() or self._clear_messages(),
+                self._welcome.show()))
             lo.addWidget(leave_btn)
 
         dlg.exec_()
