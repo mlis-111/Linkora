@@ -251,7 +251,9 @@ class ChatPanel(BasePanel):
 
         rl.addWidget(self._msg_scroll, 1)
 
-        rl.addWidget(self._build_composer())
+        self._composer = self._build_composer()
+        self._composer.hide()
+        rl.addWidget(self._composer)
         return self._right
 
     def _set_chat_header(self, name, sub, is_online=None):
@@ -562,6 +564,7 @@ class ChatPanel(BasePanel):
         if target.get("type") == "p2p":
             online = self._is_online(target["id"])
         self._chat_hdr.show()
+        self._composer.show()
         self._set_chat_header(name, sub, online)
         self._history_token += 1
         self._load_history(target)
@@ -1031,6 +1034,7 @@ class ChatPanel(BasePanel):
                 self.net.send({"type": MT.GROUP_LIST}),
                 dlg.accept(),
                 setattr(self, '_current_target', None) or self._set_chat_header("", "", None) or self._chat_hdr.hide() or self._clear_messages(),
+                self._composer.hide(),
                 self._welcome.show()))
             lo.addWidget(leave_btn)
 
@@ -1079,6 +1083,7 @@ class ChatPanel(BasePanel):
             self._current_target = None
             self._clear_messages()
             self._set_chat_header("Linkora", "")
+            self._composer.hide()
             self.net.send({"type": MT.FRIEND_LIST})
 
     def _on_user_list(self, msg):
