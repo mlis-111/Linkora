@@ -1044,6 +1044,16 @@ class ChatPanel(BasePanel):
         # 加载每个好友的最新一条消息作为预览
         for f in self.state.friends:
             self.net.send({"type": MT.HISTORY_REQ, "scope": "p2p", "target": f["user_id"], "limit": 1, "token": 0})
+        # 如果当前正处在私聊界面，同步更新头部显示（备注变更后及时刷新）
+        if self._current_target and self._current_target.get("type") == "p2p":
+            fid = self._current_target["id"]
+            for f in self.state.friends:
+                if f["user_id"] == fid:
+                    new_name = f.get("remark") or f["username"]
+                    self._current_target["name"] = new_name
+                    online = self._is_online(fid)
+                    self._set_chat_header(new_name, "", online)
+                    break
 
     def _on_friend_remove_resp(self, msg):
         if msg.get("ok"):
